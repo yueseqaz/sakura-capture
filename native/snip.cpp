@@ -1247,7 +1247,8 @@ struct Editor {
                     int number = 1;
                     for (const auto& mark : marks)
                         if (mark.tool == Tool::Number)
-                            number++;
+                            number =
+                                std::max(number, (int)wcstol(mark.text.c_str(), nullptr, 10) + 1);
                     commitMark({tool, {p}, std::to_wstring(number), colors[colorIndex], thickness});
                     refresh();
                     return 0;

@@ -2,6 +2,7 @@ package main
 
 import (
 	"image"
+	"log"
 	"time"
 
 	"github.com/egoist/mygo"
@@ -16,6 +17,7 @@ func (a *application) ensureDock() {
 	}
 	a.control = mygo.NewWindow(mygo.WindowOptions{
 		Title: dockTitle, Width: 520, Height: 156, UseContentSize: true,
+		MinWidth: 1, MinHeight: 1,
 		Hidden: true, AlwaysOnTop: true, SkipTaskbar: true, DisableResize: true,
 		DisableMaximize: true, TitleBarStyle: mygo.TitleBarHidden, HideWindowButtons: true,
 		BackgroundColor: "#20262b", Content: ui.View(a.dockView),
@@ -84,6 +86,7 @@ func (a *application) restoreDock() {
 }
 
 func (a *application) collapseDock() {
+	log.Printf("dock collapse request: busy=%t stopping=%t", a.busy, a.stopping)
 	if a.control == nil || a.busy || a.stopping {
 		return
 	}
@@ -96,6 +99,7 @@ func (a *application) collapseDock() {
 	}
 	a.dockCollapsed, a.dockPinned = true, false
 	a.sizeDock(44, 104)
+	log.Printf("dock collapsed: bounds=%v", readDock(a.control.NativeHandle()).bounds)
 	a.control.Invalidate()
 }
 
