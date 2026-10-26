@@ -1,9 +1,10 @@
 package main
 
 import (
+	"testing"
+
 	"github.com/egoist/mygo/ui"
 	"github.com/yueseqaz/sakura-capture/internal/core"
-	"testing"
 )
 
 func TestCaptureView(t *testing.T) {
@@ -32,5 +33,28 @@ func TestHistoryEmpty(t *testing.T) {
 func TestTrayPNG(t *testing.T) {
 	if len(trayIcon()) < 40 {
 		t.Fatal("missing tray image")
+	}
+}
+
+func TestNavigation(t *testing.T) {
+	a := &application{store: core.Defaults()}
+	tt := ui.NewTester(a.view, 760, 800)
+	if e := tt.Click("最近文件"); e != nil {
+		t.Fatal(e)
+	}
+	if a.tab != 1 || !tt.HasText("还没有捕捉记录") {
+		t.Fatal("history navigation failed")
+	}
+	if e := tt.Click("设置"); e != nil {
+		t.Fatal(e)
+	}
+	if a.tab != 2 || !tt.HasText("全局快捷键") {
+		t.Fatal("settings navigation failed")
+	}
+	if e := tt.Click("捕捉"); e != nil {
+		t.Fatal(e)
+	}
+	if a.tab != 0 || !tt.HasText("区域录屏") {
+		t.Fatal("capture navigation failed")
 	}
 }

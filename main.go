@@ -253,9 +253,16 @@ func (a *application) record(mode string) {
 			}
 			a.cancelPreparation = nil
 			cancel()
+			if a.control != nil {
+				a.control.Destroy()
+				a.control = nil
+			}
 			en, e := startEngine(args, func(event string) {
 				if event == "READY" {
 					a.dispatch(func() {
+						if a.rec == nil || a.stopping {
+							return
+						}
 						a.busy = false
 						a.recording = true
 						a.started = time.Now()
@@ -355,7 +362,7 @@ func (a *application) showControl() {
 		a.control.Destroy()
 		a.control = nil
 	}
-	a.control = mygo.NewWindow(mygo.WindowOptions{Title: "Sakura · 录制中", Width: 380, Height: 130, AlwaysOnTop: true, DisableResize: true, DisableMaximize: true, Content: ui.View(func(c *ui.Context) {
+	a.control = mygo.NewWindow(mygo.WindowOptions{Title: "Sakura · 录制中", Width: 380, Height: 130, Hidden: true, AlwaysOnTop: true, DisableResize: true, DisableMaximize: true, Content: ui.View(func(c *ui.Context) {
 		ui.Column(c).Fill().Padding(14).Gap(10).Children(func() {
 			label := "● 正在录制"
 			if a.paused {
@@ -377,8 +384,9 @@ func (a *application) showControl() {
 		})
 	})})
 	a.control.OnClose(func(e *mygo.CloseEvent) { e.PreventDefault(); a.stop() })
-	// The platform helper applies capture exclusion to every window of this process.
+	// Apply exclusion before showing the control, avoiding a captured first frame.
 	excludeWindow(a.control.NativeHandle())
+	a.control.Show()
 }
 func (a *application) endPreparation() {
 	if a.cancelPreparation != nil {
@@ -437,7 +445,7 @@ func (a *application) view(c *ui.Context) {
 				}
 			})
 		})
-		ui.Row(c).FillWidth().Padding(12, 28).Children(func() { ui.Text(c, a.status).FontSize(12).TextColor(ui.RGB(105, 95, 100)) })
+		ui.Row(c).FillWidth().Padding(12, 28).Children(func() { ui.Text(c, a.status).Grow(1).MinWidth(0).FontSize(12).TextColor(ui.RGB(105, 95, 100)) })
 	})
 }
 func (a *application) captureView(c *ui.Context) {
