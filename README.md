@@ -4,6 +4,8 @@ A small, offline Windows screenshot and screen-recording application. Native Go 
 
 **中文使用说明：[docs/USER_GUIDE.zh-CN.md](docs/USER_GUIDE.zh-CN.md)**
 
+![Native capture interface](assets/screenshot.png)
+
 ## Download
 
 1. Open [Windows Build](https://github.com/yueseqaz/sakura-capture/actions/workflows/windows.yml).
@@ -47,7 +49,7 @@ GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -o SakuraCapture.exe .
 
 The cross-compiled executable alone is **not** a complete distribution: build the C++ engine on Windows with `scripts/build-windows.ps1`, or use GitHub Actions. The UI can run on macOS for layout development, but capture actions deliberately report that Windows is required.
 
-The workflow tests Go configuration/state and headless native UI, builds both binaries, and actually encodes **and decodes** a synthetic H.264/AAC recording. It does not claim to test interactive multi-monitor selection or real audio hardware on hosted runners. See [Windows acceptance checklist](docs/WINDOWS_QA.md).
+The workflow tests Go configuration/state and headless native UI, builds both binaries, actually encodes **and decodes** a synthetic H.264/AAC recording, checks PNG crop/annotation/redaction output, and launches the native GUI to verify startup and single-instance handover. It does not claim to test interactive multi-monitor selection or real audio hardware on hosted runners. See [Windows acceptance checklist](docs/WINDOWS_QA.md).
 
 ## Architecture
 

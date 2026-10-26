@@ -8,3 +8,6 @@
 *.png
 !assets/*.png
 .DS_Store
+
+*.syso
+*.res

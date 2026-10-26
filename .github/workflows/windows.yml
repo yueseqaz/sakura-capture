@@ -44,6 +44,15 @@ jobs:
         run: |
           go test -run TestPreview .
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Embed application icon and DPI manifest
+        shell: cmd
+        run: |
+          cd assets
+          rc /nologo /fo app.res app.rc
+          if errorlevel 1 exit /b 1
+          cvtres /nologo /machine:x64 /out:..\rsrc_windows_amd64.syso app.res
+          if errorlevel 1 exit /b 1
+          cd ..
       - name: Build native Go application
         shell: pwsh
         env:
@@ -60,6 +69,9 @@ jobs:
           $hash = (Get-FileHash SakuraCapture-windows-x64.zip -Algorithm SHA256).Hash.ToLower()
           "$hash  SakuraCapture-windows-x64.zip" | Out-File -Encoding ascii SHA256SUMS.txt
           "## Windows portable build`n`nDownload the **SakuraCapture-windows-x64** artifact below. Extract it completely and run **SakuraCapture.exe**. Both executables must remain together.`n`nSHA-256: ``$hash``" >> $env:GITHUB_STEP_SUMMARY
+      - name: Launch native GUI and test single-instance handover
+        shell: pwsh
+        run: ./scripts/smoke-ui.ps1
       - uses: actions/upload-artifact@v4
         with:
           name: SakuraCapture-windows-x64
