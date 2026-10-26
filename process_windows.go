@@ -10,6 +10,24 @@ import (
 
 var user32 = syscall.NewLazyDLL("user32.dll")
 
+func prepareDockWindow(w uintptr) error {
+	// A hidden caption still enforces a 136px system-menu minimum on Windows.
+	// A genuine popup style allows the same HWND to shrink to the 44-DIP tab.
+	style, _, err := user32.NewProc("GetWindowLongPtrW").Call(w, ^uintptr(15)) // GWL_STYLE = -16
+	if style == 0 {
+		return fmt.Errorf("读取悬浮窗样式失败: %v", err)
+	}
+	next := uint32(style)&^uint32(0x00cf0000) | 0x80000000
+	old, _, err := user32.NewProc("SetWindowLongPtrW").Call(w, ^uintptr(15), uintptr(next))
+	if old == 0 {
+		return fmt.Errorf("初始化悬浮窗样式失败: %v", err)
+	}
+	user32.NewProc("SetWindowPos").Call(w, 0, 0, 0, 0, 0, 0x0001|0x0002|0x0004|0x0010|0x0020)
+	corner := uint32(2)
+	syscall.NewLazyDLL("dwmapi.dll").NewProc("DwmSetWindowAttribute").Call(w, 33, uintptr(unsafe.Pointer(&corner)), 4)
+	return nil
+}
+
 func readDock(w uintptr) dockState {
 	var r winRect
 	user32.NewProc("GetWindowRect").Call(w, uintptr(unsafe.Pointer(&r)))

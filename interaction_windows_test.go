@@ -639,6 +639,23 @@ func TestWindowsRecordingDockInteraction(t *testing.T) {
 		user32.NewProc("GetWindowRect").Call(dock, uintptr(unsafe.Pointer(&r)))
 		return r.Right-r.Left > 400
 	})
+	second = exec.Command(filepath.Join(dist, "SakuraCapture.exe"))
+	prepareCommand(second)
+	second.Env = cmd.Env
+	if output, err := second.CombinedOutput(); err != nil {
+		t.Fatalf("open main for graceful quit: %v %s", err, output)
+	}
+	eventuallyInteraction(t, "main for graceful quit", p, func() bool { main = interactionWindow(cmd.Process.Pid, "", "Sakura Capture"); return main != 0 })
+	time.Sleep(600 * time.Millisecond)
+	interactionClickLabel(t, main, a.view, "退出")
+	select {
+	case <-p.done:
+		if p.err != nil {
+			t.Fatalf("graceful exit: %v %s", p.err, p.log.text())
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("persistent dock prevented normal application exit", p.log.text())
+	}
 	t.Log("persistent startup/restore, screenshot cancellation, edge tab, visible topmost dock, pixel exclusion, pause/resume/stop and MP4 decoding verified")
 }
 

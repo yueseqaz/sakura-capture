@@ -17,13 +17,18 @@ func (a *application) ensureDock() {
 	}
 	a.control = mygo.NewWindow(mygo.WindowOptions{
 		Title: dockTitle, Width: 520, Height: 156, UseContentSize: true,
-		// Override the native caption's default minimum width for the 44-DIP tab.
 		MinWidth: 1, MinHeight: 1,
 		Hidden: true, AlwaysOnTop: true, SkipTaskbar: true, DisableResize: true,
-		DisableMaximize: true, TitleBarStyle: mygo.TitleBarHidden, HideWindowButtons: true,
+		DisableMaximize: true, Frameless: true,
 		BackgroundColor: "#20262b", Content: ui.View(a.dockView),
 	})
+	if err := prepareDockWindow(a.control.NativeHandle()); err != nil {
+		a.status = err.Error()
+	}
 	a.control.OnClose(func(e *mygo.CloseEvent) {
+		if a.quitting {
+			return
+		}
 		e.PreventDefault()
 		if a.busy || a.rec != nil {
 			a.stop()

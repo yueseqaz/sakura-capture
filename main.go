@@ -93,6 +93,9 @@ func (a *application) ready() {
 			e.PreventDefault()
 			a.save()
 			a.win.Hide()
+		} else if !a.quitting {
+			e.PreventDefault()
+			a.quit()
 		}
 	})
 	a.tray, _ = mygo.NewTray(mygo.TrayOptions{ID: "sakura-capture", Icon: trayIcon(), ToolTip: "Sakura Capture"})
@@ -475,6 +478,7 @@ func (a *application) view(c *ui.Context) {
 				ui.Text(c, "SAKURA").Font("Bahnschrift").FontSize(20).Bold()
 				ui.Text(c, "DESKTOP COMPANION").Grow(1).FontSize(10).TextColor(muted)
 				ui.Text(c, version).FontSize(11).TextColor(muted)
+				ui.Button(c, "退出").Height(28).FontSize(11).Tooltip("完整退出软件；活动录制需先停止保存").OnClick(a.quit)
 			})
 			ui.Segmented(c, &a.tab, "捕捉", "最近文件", "设置").FillWidth()
 		})
