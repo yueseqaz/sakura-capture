@@ -2,6 +2,8 @@
 
 A green CI build is not interactive desktop certification. Complete this checklist on Windows before publishing a stable release.
 
+v0.2.2 adds actual HWND interaction tests on the hosted Windows desktop, including screenshot selection, exported annotation thickness, and the recording dock's visibility, topmost state, capture-excluded pixels and pause/resume/stop bindings. This is stronger than the earlier headless rendering/startup checks, but does not replace physical audio devices or mixed-DPI hardware acceptance.
+
 - [ ] Clean Windows 11 x64: unzip, launch without admin, tray visible, no missing runtime.
 - [ ] 100%, 125%, 150%, 200% scaling; two monitors with mixed DPI and negative coordinates.
 - [ ] Region, screen and window-region snips; escape, reselect, every annotation, text/Chinese IME, undo/redo.
@@ -19,6 +21,15 @@ A green CI build is not interactive desktop certification. Complete this checkli
 - [ ] Verify partial-file and finalization errors are understandable; never claim crash recovery.
 - [ ] Measure combined binary/zip size and idle resource use; record hardware and OS build.
 - [ ] Check unsigned binary warnings without recommending disabling Windows security.
+
+## v0.2.2 回归验收
+
+- 屏幕截图点击一次进入标注，Enter 保存；Esc 取消后可立即重新截图。
+- 区域截图拖动后绘制矩形，点击 9px，确认已有矩形立即变粗；V 选择另一标注可改色与粗细，Ctrl+Z/Y 恢复样式。
+- 右键重选后 Ctrl+Z 不崩溃，不恢复上一个选区的标注。
+- 在每个显示器上分别开始屏幕录制，控制台应出现在对应显示器工作区内，暂停/继续/停止均可操作。
+- 录制桌面，移动控制台并切换声音；回放 MP4 确认没有控制台或黑色遮挡块。
+- 无法设置捕获排除时，应明确取消录制，不能偷偷隐藏控制台继续录制。
 
 ## v0.2.0 新增验收
 

@@ -118,3 +118,19 @@ func TestControlView(t *testing.T) {
 		t.Fatal("resume is not wired to engine")
 	}
 }
+
+func TestControlStartupView(t *testing.T) {
+	w := &controlInput{}
+	a := &application{store: core.Defaults(), rec: &engine{input: w}, busy: true}
+	tt := ui.NewTester(a.controlView, 520, 200)
+	if !tt.HasText("● 正在启动录制…") || !tt.HasText("停止并保存") {
+		t.Fatal("startup must show a visible, stoppable dock", tt.Texts())
+	}
+	_ = tt.Click("暂停")
+	if w.Len() != 0 || a.paused {
+		t.Fatal("must not pause before encoder READY")
+	}
+	if err := tt.Click("停止并保存"); err != nil || w.String() != "stop\n" {
+		t.Fatal("must be able to stop while encoder starts", err, w.String())
+	}
+}

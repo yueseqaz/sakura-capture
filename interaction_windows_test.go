@@ -23,18 +23,18 @@ import (
 // after building both executables on an interactive Windows runner desktop.
 type interactionLog struct {
 	sync.Mutex
-	bytes.Buffer
+	buffer bytes.Buffer
 }
 
 func (b *interactionLog) Write(p []byte) (int, error) {
 	b.Lock()
 	defer b.Unlock()
-	return b.Buffer.Write(p)
+	return b.buffer.Write(p)
 }
 func (b *interactionLog) text() string {
 	b.Lock()
 	defer b.Unlock()
-	return b.Buffer.String()
+	return b.buffer.String()
 }
 
 type interactionProcess struct {
@@ -62,8 +62,11 @@ type interactionSearch struct {
 	hwnd         uintptr
 }
 
-var interactionEnum = syscall.NewCallback(func(w, lp uintptr) uintptr {
-	s := (*interactionSearch)(unsafe.Pointer(lp))
+var interactionEnumMutex sync.Mutex
+var interactionCurrentSearch *interactionSearch
+
+var interactionEnum = syscall.NewCallback(func(w, _ uintptr) uintptr {
+	s := interactionCurrentSearch
 	var pid uint32
 	user32.NewProc("GetWindowThreadProcessId").Call(w, uintptr(unsafe.Pointer(&pid)))
 	visible, _, _ := user32.NewProc("IsWindowVisible").Call(w)
@@ -82,8 +85,12 @@ var interactionEnum = syscall.NewCallback(func(w, lp uintptr) uintptr {
 })
 
 func interactionWindow(pid int, class, title string) uintptr {
+	interactionEnumMutex.Lock()
+	defer interactionEnumMutex.Unlock()
 	s := interactionSearch{pid: uint32(pid), class: class, title: title}
-	user32.NewProc("EnumWindows").Call(interactionEnum, uintptr(unsafe.Pointer(&s)))
+	interactionCurrentSearch = &s
+	defer func() { interactionCurrentSearch = nil }()
+	user32.NewProc("EnumWindows").Call(interactionEnum, 0)
 	return s.hwnd
 }
 
@@ -135,6 +142,14 @@ func interactionDist(t *testing.T) string {
 	return d
 }
 
+func TestWindowsEngineLaunchFlags(t *testing.T) {
+	cmd := exec.Command("sakura-engine.exe")
+	prepareCommand(cmd)
+	if cmd.SysProcAttr == nil || cmd.SysProcAttr.HideWindow || cmd.SysProcAttr.CreationFlags&0x08000000 == 0 {
+		t.Fatal("hide only the console; STARTF_USESHOWWINDOW can suppress the selection overlay")
+	}
+}
+
 func TestWindowsScreenshotInteraction(t *testing.T) {
 	dist := interactionDist(t)
 	for _, legacy := range []bool{false, true} {
@@ -183,6 +198,8 @@ func TestWindowsScreenshotInteraction(t *testing.T) {
 			interactionDrag(w, 60, 80, 560, 380)
 			interactionDrag(w, 140, 140, 400, 260) // default rectangle, initially 3px
 			if width == 9 {
+				interactionKey(w, 'V')
+				interactionClick(w, 240, 190)
 				// Region toolbar starts at (60,390); restyle the existing mark.
 				interactionClick(w, 60+260+2*55+24, 390+65)
 			}
@@ -217,6 +234,26 @@ func TestWindowsScreenshotInteraction(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("cancel-and-reselect", func(t *testing.T) {
+		cmd := exec.Command(filepath.Join(dist, "sakura-engine.exe"), "snip", filepath.Join(t.TempDir(), "unused.png"), "region")
+		prepareCommand(cmd)
+		p := launchInteraction(t, cmd)
+		var w uintptr
+		eventuallyInteraction(t, "cancellable selection", p, func() bool { w = interactionWindow(cmd.Process.Pid, "SakuraCaptureOverlay", ""); return w != 0 })
+		interactionDrag(w, 60, 80, 560, 380)
+		interactionDrag(w, 140, 140, 400, 260)
+		interactionMessage(w, 0x204, 0, interactionPoint(200, 200)) // right-click reselect
+		interactionKey(w, 27)
+		select {
+		case <-p.done:
+			if p.err != nil || !strings.Contains(p.log.text(), "CANCELLED") {
+				t.Fatal("selection did not cancel cleanly", p.err, p.log.text())
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("Esc left selection running")
+		}
+	})
 }
 
 func interactionClickLabel(t *testing.T, w uintptr, view func(*ui.Context), text string) {
@@ -378,18 +415,24 @@ func TestWindowsRecordingDockInteraction(t *testing.T) {
 	t.Log("real screenshot selection, visible topmost dock, pixel exclusion, pause/resume/stop and MP4 decoding verified")
 }
 
-var interactionOverlayEnum = syscall.NewCallback(func(w, lp uintptr) uintptr {
+var interactionCurrentOverlay uintptr
+
+var interactionOverlayEnum = syscall.NewCallback(func(w, _ uintptr) uintptr {
 	var class [256]uint16
 	user32.NewProc("GetClassNameW").Call(w, uintptr(unsafe.Pointer(&class[0])), 256)
 	visible, _, _ := user32.NewProc("IsWindowVisible").Call(w)
 	if visible != 0 && syscall.UTF16ToString(class[:]) == "SakuraCaptureOverlay" {
-		*(*uintptr)(unsafe.Pointer(lp)) = w
+		interactionCurrentOverlay = w
 		return 0
 	}
 	return 1
 })
 
 func findInteractionOverlay(w *uintptr) bool {
-	user32.NewProc("EnumWindows").Call(interactionOverlayEnum, uintptr(unsafe.Pointer(w)))
+	interactionEnumMutex.Lock()
+	defer interactionEnumMutex.Unlock()
+	interactionCurrentOverlay = 0
+	user32.NewProc("EnumWindows").Call(interactionOverlayEnum, 0)
+	*w = interactionCurrentOverlay
 	return *w != 0
 }
