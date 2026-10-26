@@ -10,6 +10,22 @@ import (
 
 var user32 = syscall.NewLazyDLL("user32.dll")
 
+func readDock(w uintptr) dockState {
+	var r winRect
+	user32.NewProc("GetWindowRect").Call(w, uintptr(unsafe.Pointer(&r)))
+	monitor, _, _ := user32.NewProc("MonitorFromWindow").Call(w, 2)
+	info := monitorInfo{Size: uint32(unsafe.Sizeof(monitorInfo{}))}
+	user32.NewProc("GetMonitorInfoW").Call(monitor, uintptr(unsafe.Pointer(&info)))
+	var p struct{ X, Y int32 }
+	user32.NewProc("GetCursorPos").Call(uintptr(unsafe.Pointer(&p)))
+	down, _, _ := user32.NewProc("GetAsyncKeyState").Call(1)
+	return dockState{bounds: image.Rect(int(r.Left), int(r.Top), int(r.Right), int(r.Bottom)), work: image.Rect(int(info.Work.Left), int(info.Work.Top), int(info.Work.Right), int(info.Work.Bottom)), cursor: image.Pt(int(p.X), int(p.Y)), down: down&0x8000 != 0}
+}
+
+func moveDock(w uintptr, p image.Point) {
+	user32.NewProc("SetWindowPos").Call(w, ^uintptr(0), uintptr(p.X), uintptr(p.Y), 0, 0, 0x0001|0x0010)
+}
+
 // STARTF_USESHOWWINDOW/SW_HIDE suppresses the engine's first overlay ShowWindow.
 // CREATE_NO_WINDOW hides only the console and leaves normal GUI windows usable.
 func prepareCommand(c *exec.Cmd) {

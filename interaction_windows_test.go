@@ -201,7 +201,7 @@ func TestWindowsScreenshotInteraction(t *testing.T) {
 				interactionKey(w, 'V')
 				interactionClick(w, 240, 190)
 				// Region toolbar starts at (60,390); restyle the existing mark.
-				interactionClick(w, 60+260+2*55+24, 390+65)
+				interactionClick(w, 60+242+8+17, 390+65)
 			}
 			interactionKey(w, 13)
 			select {
@@ -370,6 +370,15 @@ func TestWindowsRecordingDockInteraction(t *testing.T) {
 	p := launchInteraction(t, cmd)
 	a := &application{store: s, recording: true}
 	var main, overlay, dock uintptr
+	eventuallyInteraction(t, "persistent startup dock", p, func() bool { dock = interactionWindow(cmd.Process.Pid, "", dockTitle); return dock != 0 })
+	originalDock := dock
+	// A second instance opens the secondary main window; startup itself stays compact.
+	second := exec.Command(filepath.Join(dist, "SakuraCapture.exe"))
+	prepareCommand(second)
+	second.Env = cmd.Env
+	if output, err := second.CombinedOutput(); err != nil {
+		t.Fatalf("second instance: %v %s", err, output)
+	}
 	eventuallyInteraction(t, "main window", p, func() bool { main = interactionWindow(cmd.Process.Pid, "", "Sakura Capture"); return main != 0 })
 	interactionClickLabel(t, main, a.view, "屏幕录屏")
 	eventuallyInteraction(t, "recording selection", p, func() bool {
@@ -378,7 +387,7 @@ func TestWindowsRecordingDockInteraction(t *testing.T) {
 	})
 	interactionClick(overlay, 150, 150)
 	eventuallyInteraction(t, "visible recording dock", p, func() bool {
-		dock = interactionWindow(cmd.Process.Pid, "", "Sakura · 录制控制台")
+		dock = interactionWindow(cmd.Process.Pid, "", dockTitle)
 		return dock != 0
 	})
 	eventuallyInteraction(t, "encoder READY", p, func() bool { return strings.Contains(p.log.text(), "capture engine: READY") })
@@ -406,8 +415,8 @@ func TestWindowsRecordingDockInteraction(t *testing.T) {
 	a.paused = false
 	time.Sleep(500 * time.Millisecond)
 	interactionClickLabel(t, dock, a.controlView, "停止并保存")
-	eventuallyInteraction(t, "recording saved and dock closed", p, func() bool {
-		return strings.Contains(p.log.text(), "capture engine: SAVED") && interactionWindow(cmd.Process.Pid, "", "Sakura · 录制控制台") == 0
+	eventuallyInteraction(t, "recording saved and persistent dock restored", p, func() bool {
+		return strings.Contains(p.log.text(), "capture engine: SAVED") && interactionWindow(cmd.Process.Pid, "", dockTitle) == originalDock
 	})
 	files, _ := filepath.Glob(filepath.Join(root, "*.mp4"))
 	if len(files) != 1 {
@@ -418,7 +427,26 @@ func TestWindowsRecordingDockInteraction(t *testing.T) {
 	if output, err := inspect.CombinedOutput(); err != nil {
 		t.Fatalf("recording decode validation: %v %s", err, output)
 	}
-	t.Log("real screenshot selection, visible topmost dock, pixel exclusion, pause/resume/stop and MP4 decoding verified")
+	a.recording = false
+	time.Sleep(500 * time.Millisecond)
+	interactionClickLabel(t, dock, a.dockView, "截图")
+	eventuallyInteraction(t, "screenshot directly from restored dock", p, func() bool { return findInteractionOverlay(&overlay) })
+	interactionKey(overlay, 27)
+	eventuallyInteraction(t, "dock returns after screenshot cancellation", p, func() bool { return interactionWindow(cmd.Process.Pid, "", dockTitle) == originalDock })
+	// Exercise real native resizing, not only a headless collapsed view.
+	interactionClickLabel(t, dock, a.dockView, "收纳")
+	eventuallyInteraction(t, "collapsed side tab", p, func() bool {
+		var r winRect
+		user32.NewProc("GetWindowRect").Call(dock, uintptr(unsafe.Pointer(&r)))
+		return r.Right-r.Left < 100
+	})
+	interactionClickLabel(t, dock, (&application{dockCollapsed: true}).dockView, "捕捉")
+	eventuallyInteraction(t, "side tab expands", p, func() bool {
+		var r winRect
+		user32.NewProc("GetWindowRect").Call(dock, uintptr(unsafe.Pointer(&r)))
+		return r.Right-r.Left > 400
+	})
+	t.Log("persistent startup/restore, screenshot cancellation, edge tab, visible topmost dock, pixel exclusion, pause/resume/stop and MP4 decoding verified")
 }
 
 var interactionCurrentOverlay uintptr

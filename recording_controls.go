@@ -56,10 +56,13 @@ func (a *application) audioEvent(event string) {
 func (a *application) controlView(c *ui.Context) {
 	c.SetTheme(sakuraTheme(true))
 	ui.Column(c).Fill().Padding(16, 20).Gap(12).Background(ink).Children(func() {
-		ui.Row(c).FillWidth().AlignItems(ui.Center).Gap(8).DragWindow().Children(func() {
-			ui.Text(c, "SAKURA / LIVE").FontSize(11).Bold().TextColor(ui.Hex("#e9b3bb"))
-			ui.Text(c, "拖动此处移动").Grow(1).FontSize(11).TextColor(ui.Hex("#9da9ae"))
-			ui.Text(c, "MP4 · 本地保存").FontSize(11).TextColor(ui.Hex("#9da9ae"))
+		ui.Row(c).FillWidth().AlignItems(ui.Center).Gap(8).Children(func() {
+			ui.Row(c).Grow(1).Gap(8).DragWindow().Children(func() {
+				ui.Text(c, "SAKURA / LIVE").FontSize(11).Bold().TextColor(ui.Hex("#e9b3bb"))
+				ui.Text(c, "拖动此处移动").Grow(1).FontSize(11).TextColor(ui.Hex("#9da9ae"))
+				ui.Text(c, "MP4 · 本地保存").FontSize(11).TextColor(ui.Hex("#9da9ae"))
+			})
+			ui.Button(c, "收纳").Disabled(a.stopping || !a.recording).OnClick(a.collapseDock)
 		})
 		ui.Row(c).FillWidth().Gap(14).AlignItems(ui.Center).Children(func() {
 			label, dot := "正在录制", rose

@@ -19,6 +19,10 @@ type Config struct {
 	ShotKey   string `json:"screenshot_key"`
 	RecordKey string `json:"record_key"`
 	StopKey   string `json:"stop_key"`
+	DockX     int    `json:"dock_x"`
+	DockY     int    `json:"dock_y"`
+	DockSaved bool   `json:"dock_saved"`
+	DockEdge  string `json:"dock_edge,omitempty"`
 }
 type Item struct {
 	Path    string    `json:"path"`

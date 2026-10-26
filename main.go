@@ -37,6 +37,10 @@ type application struct {
 	recordArea                                  image.Rectangle
 	registered                                  []string
 	cancelPreparation                           context.CancelFunc
+	dockCollapsed, dockPinned, dockAdjusting    bool
+	dockEdge                                    string
+	dockOutside                                 time.Time
+	dockLast                                    image.Rectangle
 }
 
 func main() {
@@ -77,7 +81,7 @@ func (a *application) save() {
 	}
 }
 func (a *application) ready() {
-	a.win = mygo.NewWindow(mygo.WindowOptions{Title: "Sakura Capture", Width: 760, Height: 800, MinWidth: 640, MinHeight: 620, Content: ui.View(a.view)})
+	a.win = mygo.NewWindow(mygo.WindowOptions{Title: "Sakura Capture", Width: 760, Height: 800, MinWidth: 640, MinHeight: 620, Hidden: true, Content: ui.View(a.view)})
 	a.win.OnClose(func(e *mygo.CloseEvent) {
 		if !a.quitting && (a.busy || a.rec != nil) && a.tray == nil {
 			e.PreventDefault()
@@ -104,6 +108,22 @@ func (a *application) ready() {
 		a.tray.OnClick(a.show)
 	}
 	a.bindKeys()
+	a.ensureDock()
+	a.restoreDock()
+	if a.tray == nil {
+		a.show()
+	}
+	go func() {
+		ticker := time.NewTicker(250 * time.Millisecond)
+		defer ticker.Stop()
+		for range ticker.C {
+			mygo.App.WhenReady(func() {
+				if !a.quitting {
+					a.dockTick()
+				}
+			})
+		}
+	}()
 	mygo.App.OnBeforeQuit(func(e *mygo.QuitEvent) {
 		if a.busy || a.rec != nil {
 			e.PreventDefault()
@@ -158,7 +178,7 @@ func (a *application) bindKeys() {
 		}
 	}
 }
-func (a *application) fail(e error) { a.status = e.Error(); a.show() }
+func (a *application) fail(e error) { a.status = e.Error(); a.restoreDock(); a.show() }
 func (a *application) screenshot(mode string) {
 	if a.quitting || a.busy || a.rec != nil {
 		return
@@ -175,6 +195,7 @@ func (a *application) screenshot(mode string) {
 	a.save()
 	a.busy = true
 	a.win.Hide()
+	a.hideDock()
 	go func() {
 		time.Sleep(220 * time.Millisecond)
 		out, e := runEngine("snip", path, mode)
@@ -191,10 +212,12 @@ func (a *application) screenshot(mode string) {
 				if strings.Contains(out, "clipboard_failed") {
 					a.status = "截图已保存，但剪贴板被占用，复制失败"
 				}
+			} else if strings.HasPrefix(out, "COPIED") {
+				a.status = "截图已复制到剪贴板（未保存文件）"
 			} else {
 				a.status = "已取消截图"
 			}
-			a.show()
+			a.restoreDock()
 		})
 	}()
 }
@@ -217,6 +240,7 @@ func (a *application) record(mode string) {
 	a.busy = true
 	a.cancelPreparation = cancel
 	a.win.Hide()
+	a.hideDock()
 	go func() {
 		time.Sleep(220 * time.Millisecond)
 		out, e := runEngineContext(ctx, "select", mode)
@@ -248,9 +272,7 @@ func (a *application) record(mode string) {
 					return
 				}
 				a.status = fmt.Sprintf("%d 秒后开始录制…", left)
-				if a.control == nil {
-					a.showCountdown()
-				}
+				a.showCountdown()
 			})
 			select {
 			case <-ctx.Done():
@@ -268,10 +290,6 @@ func (a *application) record(mode string) {
 			}
 			a.cancelPreparation = nil
 			cancel()
-			if a.control != nil {
-				a.control.Destroy()
-				a.control = nil
-			}
 			a.systemAudio, a.micAudio = false, false
 			a.systemPending, a.micPending = true, true
 			a.audioNotice = ""
@@ -335,10 +353,7 @@ func (a *application) record(mode string) {
 					a.paused = false
 					a.stopping = false
 					a.rec = nil
-					if a.control != nil {
-						a.control.Destroy()
-						a.control = nil
-					}
+					a.restoreDock()
 					if err != nil {
 						a.fail(err)
 						return
@@ -350,7 +365,7 @@ func (a *application) record(mode string) {
 					a.store.Add(path, "录屏")
 					a.save()
 					a.status = "录屏已保存"
-					a.show()
+					a.restoreDock()
 				})
 			}()
 		})
@@ -393,29 +408,16 @@ func (a *application) pause() {
 	a.paused = !a.paused
 }
 func (a *application) showControl() error {
-	if a.control != nil {
-		a.control.Destroy()
-		a.control = nil
-	}
-	a.control = mygo.NewWindow(mygo.WindowOptions{
-		Title: "Sakura · 录制控制台", Width: 520, Height: 200, UseContentSize: true,
-		Hidden: true, AlwaysOnTop: true, SkipTaskbar: true, DisableResize: true,
-		DisableMaximize: true, TitleBarStyle: mygo.TitleBarHidden, HideWindowButtons: true,
-		BackgroundColor: "#20262b", Content: ui.View(a.controlView),
-	})
-	a.control.OnClose(func(e *mygo.CloseEvent) { e.PreventDefault(); a.stop() })
+	a.ensureDock()
 	// Apply exclusion before showing the control, avoiding a captured first frame.
 	if err := excludeWindow(a.control.NativeHandle()); err != nil {
-		a.control.Destroy()
-		a.control = nil
 		return err
 	}
-	a.control.Show()
-	if err := placeControl(a.control.NativeHandle(), a.recordArea); err != nil {
-		a.control.Destroy()
-		a.control = nil
-		return err
-	}
+	a.dockCollapsed = false
+	a.dockPinned = true
+	a.sizeDock(520, 200)
+	a.control.ShowInactive()
+	a.control.Invalidate()
 	return nil
 }
 
@@ -441,24 +443,15 @@ func (a *application) endPreparation() {
 		a.cancelPreparation = nil
 	}
 	a.busy = false
-	if a.control != nil {
-		a.control.Destroy()
-		a.control = nil
-	}
 	a.status = "已取消录制"
-	a.show()
+	a.restoreDock()
 }
 func (a *application) showCountdown() {
-	a.control = mygo.NewWindow(mygo.WindowOptions{
-		Title: "Sakura · 准备录制", Width: 320, Height: 120, AlwaysOnTop: true,
-		DisableResize: true, Content: ui.View(func(c *ui.Context) {
-			ui.Column(c).Fill().Padding(16).Gap(12).Children(func() {
-				ui.Text(c, a.status).Bold()
-				ui.Button(c, "取消录制").OnClick(a.stop)
-			})
-		}),
-	})
-	a.control.OnClose(func(e *mygo.CloseEvent) { e.PreventDefault(); a.stop() })
+	a.ensureDock()
+	a.dockCollapsed = false
+	a.sizeDock(520, 156)
+	a.control.ShowInactive()
+	a.control.Invalidate()
 }
 func section(c *ui.Context, title, detail string, body func()) {
 	ui.Column(c).FillWidth().Padding(22).Gap(12).Radius(16).Border(1, line).Background(ui.Hex("#fffdfb")).Children(func() {
@@ -478,7 +471,7 @@ func (a *application) view(c *ui.Context) {
 					ui.Icon(c, shotIcon).Size(22, 22).TextColor(ui.Hex("#ffffff"))
 				})
 				ui.Text(c, "SAKURA").Font("Bahnschrift").FontSize(20).Bold()
-				ui.Text(c, "CAPTURE STUDIO").Grow(1).FontSize(10).TextColor(muted)
+				ui.Text(c, "DESKTOP COMPANION").Grow(1).FontSize(10).TextColor(muted)
 				ui.Text(c, version).FontSize(11).TextColor(muted)
 			})
 			ui.Segmented(c, &a.tab, "捕捉", "最近文件", "设置").FillWidth()
@@ -505,21 +498,21 @@ func (a *application) captureView(c *ui.Context) {
 	disabled := a.busy || a.rec != nil
 	ui.Row(c).FillWidth().Padding(20, 22).Radius(16).Gradient(ui.Hex("#efe1dd"), ui.Hex("#f9eee5"), 20).Gap(16).AlignItems(ui.Center).Children(func() {
 		ui.Column(c).Grow(1).Gap(6).Children(func() {
-			ui.Text(c, "把这一刻，留下来。").FontSize(26).Bold()
+			ui.Text(c, "随时在旁，随手捕捉。").FontSize(26).Bold()
 			ui.Text(c, "原生桌面 · 本地保存 · 无需登录").FontSize(12).TextColor(ui.Hex("#896b6b"))
 		})
 		ui.Column(c).Gap(4).AlignItems(ui.End).Children(func() {
-			ui.Text(c, "轻一点，快一点。").FontSize(12).Bold().TextColor(rose)
+			ui.Text(c, "悬浮常驻 · 贴边收纳").FontSize(12).Bold().TextColor(rose)
 			ui.Text(c, "PNG / MP4").Font("Consolas").FontSize(11).TextColor(ui.Hex("#896b6b"))
 		})
 	})
-	section(c, "01  /  截图", "框选画面，随手标注。保存的同时复制到剪贴板。", func() {
+	section(c, "01  /  截图", "可编辑标注 · 连续粗细 · 自定义颜色与拾色 · 复制或保存。", func() {
 		ui.Row(c).Gap(10).Wrap().Children(func() {
 			actionButton(c, "区域截图", shotIcon, true).Disabled(disabled).OnClick(func() { a.screenshot("region") })
 			ui.Button(c, "屏幕截图").Height(38).Disabled(disabled).OnClick(func() { a.screenshot("screen") })
 			ui.Button(c, "窗口截图").Height(38).Disabled(disabled).OnClick(func() { a.screenshot("window") })
 		})
-		ui.Text(c, "矩形 / 箭头 / 画笔 / 马赛克 / 文字   ·   "+a.store.Config.ShotKey).FontSize(11).TextColor(muted)
+		ui.Text(c, "选择移动 / 箭头 / 高亮 / 文字 / 马赛克   ·   "+a.store.Config.ShotKey).FontSize(11).TextColor(muted)
 	})
 	section(c, "02  /  录屏", "记录操作，也记录讲解。悬浮控制台随时暂停和切换声音。", func() {
 		ui.Row(c).Gap(12).Wrap().Children(func() {
@@ -589,6 +582,18 @@ func (a *application) historyView(c *ui.Context) {
 	}
 }
 func (a *application) settingsView(c *ui.Context) {
+	section(c, "桌面悬浮工具栏", "启动即常驻；拖动至左右边缘，移开鼠标后自动收纳。", func() {
+		ui.Row(c).Gap(10).Children(func() {
+			ui.Button(c, "展开并固定工具栏").OnClick(func() {
+				a.expandDock(true)
+				if a.control != nil {
+					a.control.ShowInactive()
+				}
+			})
+			ui.Button(c, "贴边收纳").OnClick(a.collapseDock)
+		})
+		ui.Text(c, "截图时自动隐藏，结束后恢复。录制时切换为控制台；收纳后悬停可展开。完整退出请使用托盘菜单。 ").FillWidth().FontSize(12)
+	})
 	section(c, "保存与录制", "设置只保存在当前用户的本地配置目录。", func() {
 		ui.Text(c, "保存目录").FontSize(12)
 		ui.TextInput(c, &a.store.Config.Directory).FillWidth()

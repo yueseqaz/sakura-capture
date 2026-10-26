@@ -49,4 +49,21 @@ func TestPreview(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	for _, collapsed := range []bool{false, true} {
+		a := &application{store: core.Defaults(), dockCollapsed: collapsed, status: "随时在旁，随手捕捉。"}
+		w, h, name := 520, 156, "floating-toolbar"
+		if collapsed {
+			w, h, name = 44, 104, "edge-tab"
+		}
+		tt := ui.NewTester(a.dockView, w, h)
+		f, err := os.Create(filepath.Join(dir, name+".png"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = png.Encode(f, tt.Image())
+		f.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
 }
