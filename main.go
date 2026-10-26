@@ -34,6 +34,7 @@ type application struct {
 	systemAudio, micAudio                       bool
 	systemPending, micPending                   bool
 	audioNotice                                 string
+	recordArea                                  image.Rectangle
 	registered                                  []string
 	cancelPreparation                           context.CancelFunc
 }
@@ -230,8 +231,13 @@ func (a *application) record(mode string) {
 			return
 		}
 		fields := strings.Fields(out)
-		if len(fields) != 5 || fields[0] != "REGION" {
+		if out == "CANCELLED" {
 			a.dispatch(a.endPreparation)
+			return
+		}
+		area, err := parseRegion(out)
+		if err != nil {
+			a.dispatch(func() { a.endPreparation(); a.fail(err) })
 			return
 		}
 		n, _ := strconv.Atoi(cfg.Countdown)
@@ -269,7 +275,17 @@ func (a *application) record(mode string) {
 			a.systemAudio, a.micAudio = false, false
 			a.systemPending, a.micPending = true, true
 			a.audioNotice = ""
+			a.recordArea = area
+			a.elapsed = 0
+			// Show a protected dock before encoder/audio initialization, not only
+			// after READY; otherwise a slow or failed startup looks like a hang.
+			if e := a.showControl(); e != nil {
+				a.endPreparation()
+				a.fail(e)
+				return
+			}
 			en, e := startEngine(args, func(event string) {
+				log.Printf("capture engine: %s", event)
 				if strings.HasPrefix(event, "AUDIO") {
 					a.dispatch(func() { a.audioEvent(event) })
 					return
@@ -284,7 +300,6 @@ func (a *application) record(mode string) {
 						a.started = time.Now()
 						a.elapsed = 0
 						a.status = "录制中"
-						a.showControl()
 					})
 				}
 			})
@@ -377,7 +392,7 @@ func (a *application) pause() {
 	}
 	a.paused = !a.paused
 }
-func (a *application) showControl() {
+func (a *application) showControl() error {
 	if a.control != nil {
 		a.control.Destroy()
 		a.control = nil
@@ -390,8 +405,35 @@ func (a *application) showControl() {
 	})
 	a.control.OnClose(func(e *mygo.CloseEvent) { e.PreventDefault(); a.stop() })
 	// Apply exclusion before showing the control, avoiding a captured first frame.
-	excludeWindow(a.control.NativeHandle())
+	if err := excludeWindow(a.control.NativeHandle()); err != nil {
+		a.control.Destroy()
+		a.control = nil
+		return err
+	}
 	a.control.Show()
+	if err := placeControl(a.control.NativeHandle(), a.recordArea); err != nil {
+		a.control.Destroy()
+		a.control = nil
+		return err
+	}
+	return nil
+}
+
+func parseRegion(out string) (image.Rectangle, error) {
+	f := strings.Fields(out)
+	if len(f) == 5 && f[0] == "REGION" {
+		var n [4]int
+		valid := true
+		for i := range n {
+			v, err := strconv.Atoi(f[i+1])
+			n[i] = v
+			valid = valid && err == nil && v >= -100000 && v <= 100000
+		}
+		if valid && n[2] >= 4 && n[3] >= 4 && n[2] <= 7680 && n[3] <= 4320 {
+			return image.Rect(n[0], n[1], n[0]+n[2], n[1]+n[3]), nil
+		}
+	}
+	return image.Rectangle{}, fmt.Errorf("采集引擎未返回有效选区，请完整解压新版程序后重试。返回内容: %.200s", out)
 }
 func (a *application) endPreparation() {
 	if a.cancelPreparation != nil {

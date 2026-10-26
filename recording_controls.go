@@ -63,6 +63,9 @@ func (a *application) controlView(c *ui.Context) {
 		})
 		ui.Row(c).FillWidth().Gap(14).AlignItems(ui.Center).Children(func() {
 			label, dot := "正在录制", rose
+			if !a.recording {
+				label, dot = "正在启动录制…", ui.Hex("#efbf77")
+			}
 			if a.paused {
 				label, dot = "已暂停", ui.Hex("#efbf77")
 			}
@@ -77,7 +80,7 @@ func (a *application) controlView(c *ui.Context) {
 			if a.paused {
 				p, icon = "继续", playIcon
 			}
-			actionButton(c, p, icon, false).Height(44).Disabled(a.stopping).OnClick(a.pause)
+			actionButton(c, p, icon, false).Height(44).Disabled(a.stopping || !a.recording).OnClick(a.pause)
 			actionButton(c, "停止并保存", stopIcon, true).Height(44).Disabled(a.stopping).OnClick(a.stop)
 		})
 		ui.Row(c).FillWidth().Gap(10).Children(func() {

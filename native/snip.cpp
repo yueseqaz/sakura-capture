@@ -9,6 +9,11 @@ struct Mark {
     COLORREF color;
     int width;
 };
+struct Change {
+    int index;
+    Mark before;
+    bool added;
+};
 struct Button {
     std::wstring label;
     RECT rect;
@@ -29,7 +34,10 @@ struct Editor {
     int thickness = 3, colorIndex = 0;
     COLORREF colors[5] = {RGB(236, 74, 92), RGB(36, 124, 232), RGB(44, 168, 100), RGB(245, 175, 36),
                           RGB(255, 255, 255)};
-    std::vector<Mark> marks, redo;
+    std::vector<Mark> marks;
+    std::vector<Change> undo, redo;
+    int activeMark = -1;
+    bool fakeCapture = false;
     std::vector<Button> buttons;
     Mark current{};
     HFONT font = nullptr;
@@ -40,6 +48,7 @@ struct Editor {
           y(fake ? 0 : GetSystemMetrics(SM_YVIRTUALSCREEN)),
           w(fake ? 1120 : GetSystemMetrics(SM_CXVIRTUALSCREEN)),
           h(fake ? 720 : GetSystemMetrics(SM_CYVIRTUALSCREEN)) {
+        fakeCapture = fake;
         if (fake) {
             for (int row = 0; row < h; row++)
                 for (int col = 0; col < w; col++) {
@@ -65,12 +74,24 @@ struct Editor {
         return p;
     }
     RECT toolbar() {
-        int width = std::min(w - 12, 864);
-        int left = std::clamp<int>(selection.left, 6, std::max(6, w - width - 6));
+        RECT visible{0, 0, w, h};
+        if (!fakeCapture) {
+            POINT center{(selection.left + selection.right) / 2 + x,
+                         (selection.top + selection.bottom) / 2 + y};
+            MONITORINFO info{sizeof(info)};
+            if (GetMonitorInfoW(MonitorFromPoint(center, MONITOR_DEFAULTTONEAREST), &info)) {
+                visible = info.rcMonitor;
+                OffsetRect(&visible, -x, -y);
+            }
+        }
+        int width = std::min((int)(visible.right - visible.left) - 12, 864);
+        int left = std::clamp<int>(selection.left, visible.left + 6, visible.right - width - 6);
         int top = selection.bottom + 10;
-        if (top + 124 > h)
-            top = std::max(6, (int)selection.top - 132);
-        return {left, top, left + width, std::min(top + 122, h - 2)};
+        if (top + 124 > visible.bottom)
+            top = selection.top - 132;
+        top =
+            std::clamp<int>(top, visible.top + 6, std::max(visible.top + 6, visible.bottom - 128));
+        return {left, top, left + width, top + 122};
     }
     static BOOL CALLBACK findWindow(HWND win, LPARAM data) {
         auto pair = (std::pair<Editor*, POINT>*)data;
@@ -99,10 +120,14 @@ struct Editor {
         if (mode == L"screen") {
             POINT screen{p.x + x, p.y + y};
             MONITORINFO mi{sizeof(mi)};
-            GetMonitorInfoW(MonitorFromPoint(screen, MONITOR_DEFAULTTONEAREST), &mi);
+            check(GetMonitorInfoW(MonitorFromPoint(screen, MONITOR_DEFAULTTONEAREST), &mi)
+                      ? S_OK
+                      : HRESULT_FROM_WIN32(GetLastError()),
+                  "Find selected monitor");
             selection = {mi.rcMonitor.left - x, mi.rcMonitor.top - y, mi.rcMonitor.right - x,
                          mi.rcMonitor.bottom - y};
         } else if (mode == L"window") {
+            selection = {};
             std::pair<Editor*, POINT> data{this, {p.x + x, p.y + y}};
             EnumWindows(findWindow, (LPARAM)&data);
         }
@@ -275,8 +300,18 @@ struct Editor {
                               selection.bottom);
             for (auto& mark : marks)
                 drawMark(buffer, mark);
-            if (dragging && selected && tool != Tool::Text)
+            if (dragging && selected && tool != Tool::Text && tool != Tool::Select)
                 drawMark(buffer, current);
+            if (activeMark >= 0 && activeMark < (int)marks.size()) {
+                RECT r = markBounds(marks[activeMark]);
+                HPEN focus = CreatePen(PS_DOT, 1, RGB(255, 255, 255));
+                HGDIOBJ old = SelectObject(buffer.dc, focus);
+                HGDIOBJ oldBrush = SelectObject(buffer.dc, GetStockObject(NULL_BRUSH));
+                Rectangle(buffer.dc, r.left, r.top, r.right, r.bottom);
+                SelectObject(buffer.dc, oldBrush);
+                SelectObject(buffer.dc, old);
+                DeleteObject(focus);
+            }
             RestoreDC(buffer.dc, savedDC);
             HPEN pen = CreatePen(PS_SOLID, 2, RGB(240, 103, 121));
             HGDIOBJ old = SelectObject(buffer.dc, pen),
@@ -296,26 +331,32 @@ struct Editor {
             rounded(buffer.dc, shadow, RGB(15, 18, 22), 18);
             rounded(buffer.dc, bar, RGB(32, 38, 43), 18);
             buttons.clear();
-            std::vector<std::wstring> names = {L"矩形", L"箭头", L"画笔", L"马赛克",
-                                               L"文字", L"椭圆", L"序号", L"撤销",
-                                               L"重做", L"重选", L"保存", L"取消"};
-            int cell = (bar.right - bar.left - 16) / 12;
-            for (int i = 0; i < 12; i++) {
+            std::vector<std::wstring> names = {L"选择", L"矩形", L"箭头", L"画笔", L"马赛克",
+                                               L"文字", L"椭圆", L"序号", L"撤销", L"重做",
+                                               L"重选", L"保存", L"取消"};
+            int cell = (bar.right - bar.left - 16) / 13;
+            for (int i = 0; i < 13; i++) {
                 RECT r{bar.left + 8 + i * cell, bar.top + 8, bar.left + 8 + (i + 1) * cell - 3,
                        bar.top + 44};
-                buttons.push_back({names[i], r, i});
-                bool active = i < 7 && (int)tool == i + 1;
-                bool enabled = !(i == 7 && marks.empty()) && !(i == 8 && redo.empty());
+                int action = i == 0 ? 40 : i - 1;
+                buttons.push_back({names[i], r, action});
+                bool active =
+                    (i == 0 && tool == Tool::Select) || (i > 0 && i < 8 && (int)tool == i);
+                bool enabled = !(action == 7 && undo.empty()) && !(action == 8 && redo.empty());
                 bool hover = PtInRect(&r, pointer);
-                if (active || i == 10 || (hover && enabled))
-                    rounded(buffer.dc, r, active || i == 10 ? RGB(197, 87, 107) : RGB(57, 67, 74));
+                if (active || action == 10 || (hover && enabled))
+                    rounded(buffer.dc, r,
+                            active || action == 10 ? RGB(197, 87, 107) : RGB(57, 67, 74));
                 SetTextColor(buffer.dc, enabled ? RGB(250, 245, 241) : RGB(111, 121, 128));
                 DrawTextW(buffer.dc, names[i].c_str(), -1, &r,
                           DT_CENTER | DT_VCENTER | DT_SINGLELINE);
             }
             int cy = bar.top + 65;
+            SetTextColor(buffer.dc, RGB(185, 199, 206));
+            RECT colorLabel{bar.left + 14, cy - 12, bar.left + 54, cy + 12};
+            DrawTextW(buffer.dc, L"颜色", -1, &colorLabel, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
             for (int i = 0; i < 5; i++) {
-                int cx = bar.left + 25 + i * 30;
+                int cx = bar.left + 68 + i * 28;
                 RECT r{cx - 12, cy - 12, cx + 12, cy + 12};
                 buttons.push_back({L"颜色", r, 20 + i});
                 if (i == colorIndex)
@@ -323,22 +364,28 @@ struct Editor {
                 InflateRect(&r, -3, -3);
                 rounded(buffer.dc, r, colors[i], 18);
             }
-            int widthLeft = bar.left + 178;
+            RECT widthLabel{bar.left + 210, cy - 12, bar.left + 256, cy + 12};
+            DrawTextW(buffer.dc, L"粗细", -1, &widthLabel, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+            int widthLeft = bar.left + 260;
             for (int i = 0; i < 3; i++) {
-                RECT r{widthLeft + i * 38, cy - 13, widthLeft + i * 38 + 32, cy + 13};
+                RECT r{widthLeft + i * 55, cy - 14, widthLeft + i * 55 + 49, cy + 14};
                 buttons.push_back({L"粗细", r, 30 + i});
-                rounded(buffer.dc, r, thickness == (i + 1) * 3 ? RGB(82, 60, 67) : RGB(46, 55, 62));
-                int radius = (i + 1) * 2;
-                RECT dot{r.left + 16 - radius, cy - radius, r.left + 16 + radius, cy + radius};
-                rounded(buffer.dc, dot, RGB(249, 245, 241), radius * 2);
+                rounded(buffer.dc, r,
+                        thickness == (i + 1) * 3 ? RGB(197, 87, 107) : RGB(46, 55, 62));
+                std::wstring label = std::to_wstring((i + 1) * 3) + L"px";
+                SetTextColor(buffer.dc, RGB(249, 245, 241));
+                DrawTextW(buffer.dc, label.c_str(), -1, &r, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
             }
             std::wstring dimension = std::to_wstring(selection.right - selection.left) + L" × " +
                                      std::to_wstring(selection.bottom - selection.top);
-            RECT info{bar.left + 310, cy - 12, bar.right - 16, cy + 12};
+            RECT info{bar.left + 440, cy - 12, bar.right - 16, cy + 12};
             SetTextColor(buffer.dc, RGB(185, 199, 206));
             DrawTextW(buffer.dc, dimension.c_str(), -1, &info,
                       DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
-            std::wstring hint = L"R 矩形  A 箭头  P 画笔  M 马赛克  T 文字  O 椭圆  N 序号";
+            std::wstring hint =
+                activeMark >= 0
+                    ? L"已选中标注：点击颜色或粗细可立即修改 · Ctrl+Z 撤销"
+                    : L"V 选择已有标注 · R 矩形 A 箭头 P 画笔 M 马赛克 T 文字 O 椭圆 N 序号";
             for (const auto& button : buttons) {
                 if (!PtInRect(&button.rect, pointer))
                     continue;
@@ -353,8 +400,8 @@ struct Editor {
                 if (button.action == 11)
                     hint = L"放弃本次截图 · Esc";
                 if (button.action >= 20 && button.action < 25)
-                    hint = L"点击选择标注颜色，仅影响之后的新标注";
-                if (button.action >= 30)
+                    hint = L"选择颜色：立即修改选中标注，或设置下一笔颜色";
+                if (button.action >= 30 && button.action < 33)
                     hint = L"选择线条粗细 / 文字大小 / 马赛克块大小";
             }
             if (textEditing)
@@ -384,16 +431,24 @@ struct Editor {
     }
     void clickAction(int action) {
         textEditing = false;
+        if (action == 40) {
+            tool = Tool::Select;
+            activeMark = -1;
+            return;
+        }
         if (action >= 20 && action < 25) {
             colorIndex = action - 20;
+            updateStyle();
             return;
         }
         if (action >= 30 && action < 33) {
             thickness = (action - 29) * 3;
+            updateStyle();
             return;
         }
         if (action < 7) {
             tool = (Tool)(action + 1);
+            activeMark = -1;
             return;
         }
         switch (action) {
@@ -407,7 +462,9 @@ struct Editor {
             selected = false;
             selection = {};
             marks.clear();
+            undo.clear();
             redo.clear();
+            activeMark = -1;
             tool = Tool::Rectangle;
             mode = L"region";
             break;
@@ -419,17 +476,81 @@ struct Editor {
             break;
         }
     }
-    void undoMark() {
-        if (!marks.empty()) {
-            redo.push_back(marks.back());
-            marks.pop_back();
+    void commitMark(Mark mark) {
+        redo.clear();
+        activeMark = (int)marks.size();
+        undo.push_back({activeMark, {}, true});
+        marks.push_back(std::move(mark));
+    }
+    void updateStyle() {
+        if (activeMark < 0 || activeMark >= (int)marks.size())
+            return;
+        auto& mark = marks[activeMark];
+        if (mark.width == thickness && mark.color == colors[colorIndex])
+            return;
+        undo.push_back({activeMark, mark, false});
+        redo.clear();
+        mark.width = thickness;
+        mark.color = colors[colorIndex];
+    }
+    RECT markBounds(const Mark& mark) {
+        RECT r{mark.points[0].x, mark.points[0].y, mark.points[0].x, mark.points[0].y};
+        for (auto p : mark.points) {
+            r.left = std::min(r.left, p.x);
+            r.top = std::min(r.top, p.y);
+            r.right = std::max(r.right, p.x);
+            r.bottom = std::max(r.bottom, p.y);
+        }
+        if (mark.tool == Tool::Text) {
+            r.right += (LONG)mark.text.size() * (24 + mark.width * 2);
+            r.bottom += 30 + mark.width * 2;
+        }
+        InflateRect(&r, mark.tool == Tool::Number ? 15 + mark.width : 8,
+                    mark.tool == Tool::Number ? 15 + mark.width : 8);
+        return r;
+    }
+    void selectMark(POINT p) {
+        activeMark = -1;
+        for (int i = (int)marks.size() - 1; i >= 0; i--) {
+            RECT r = markBounds(marks[i]);
+            if (!PtInRect(&r, p))
+                continue;
+            activeMark = i;
+            thickness = marks[i].width;
+            for (int c = 0; c < 5; c++)
+                if (colors[c] == marks[i].color)
+                    colorIndex = c;
+            break;
         }
     }
+    void undoMark() {
+        if (undo.empty())
+            return;
+        auto change = undo.back();
+        undo.pop_back();
+        if (change.added) {
+            change.before = marks[change.index];
+            marks.erase(marks.begin() + change.index);
+        } else
+            std::swap(change.before, marks[change.index]);
+        redo.push_back(std::move(change));
+        activeMark = -1;
+    }
     void redoMark() {
-        if (!redo.empty()) {
-            marks.push_back(redo.back());
-            redo.pop_back();
-        }
+        if (redo.empty())
+            return;
+        auto change = redo.back();
+        redo.pop_back();
+        if (change.added)
+            marks.insert(marks.begin() + change.index, change.before);
+        else
+            std::swap(change.before, marks[change.index]);
+        activeMark = change.index;
+        thickness = marks[activeMark].width;
+        for (int c = 0; c < 5; c++)
+            if (colors[c] == marks[activeMark].color)
+                colorIndex = c;
+        undo.push_back(std::move(change));
     }
     int buttonAt(POINT p) {
         for (const auto& button : buttons)
@@ -464,7 +585,7 @@ struct Editor {
                     selection = normalized(anchor, p);
                 else if (mode != L"region")
                     hover(p);
-            } else if (dragging && tool != Tool::Text) {
+            } else if (dragging && tool != Tool::Text && tool != Tool::Select) {
                 p.x = std::clamp<LONG>(p.x, selection.left, selection.right - 1);
                 p.y = std::clamp<LONG>(p.y, selection.top, selection.bottom - 1);
                 if (tool == Tool::Pen)
@@ -499,20 +620,23 @@ struct Editor {
                 }
                 if (!PtInRect(&selection, p))
                     return 0;
-                redo.clear();
+                if (tool == Tool::Select) {
+                    selectMark(p);
+                    InvalidateRect(window, nullptr, FALSE);
+                    return 0;
+                }
                 if (tool == Tool::Number) {
                     int number = 1;
                     for (const auto& mark : marks)
                         if (mark.tool == Tool::Number)
                             number++;
-                    marks.push_back(
-                        {tool, {p}, std::to_wstring(number), colors[colorIndex], thickness});
+                    commitMark({tool, {p}, std::to_wstring(number), colors[colorIndex], thickness});
                     InvalidateRect(window, nullptr, FALSE);
                     return 0;
                 }
                 if (tool == Tool::Text) {
                     textEditing = true;
-                    marks.push_back({tool, {p}, L"", colors[colorIndex], thickness});
+                    commitMark({tool, {p}, L"", colors[colorIndex], thickness});
                     InvalidateRect(window, nullptr, FALSE);
                     return 0;
                 }
@@ -539,8 +663,8 @@ struct Editor {
                     if (selectOnly)
                         finish();
                 }
-            } else if (tool != Tool::Text) {
-                marks.push_back(current);
+            } else if (tool != Tool::Text && tool != Tool::Select) {
+                commitMark(current);
             }
             InvalidateRect(window, nullptr, FALSE);
             return 0;
@@ -548,7 +672,9 @@ struct Editor {
             if (selected) {
                 selected = false;
                 marks.clear();
+                undo.clear();
                 redo.clear();
+                activeMark = -1;
                 selection = {};
                 mode = L"region";
             } else
@@ -585,6 +711,9 @@ struct Editor {
                 if (wp == 'S' || wp == 'C')
                     finish();
             } else if (selected && tool != Tool::Text) {
+                activeMark = -1;
+                if (wp == 'V')
+                    tool = Tool::Select;
                 if (wp == 'R')
                     tool = Tool::Rectangle;
                 if (wp == 'A')
@@ -643,7 +772,11 @@ int snip(const std::wstring& path, const std::wstring& mode, bool selectOnly) {
                                   editor.h, nullptr, nullptr, wc.hInstance, &editor);
     if (!window)
         throw std::runtime_error("Cannot create screenshot overlay");
-    ShowWindow(window, SW_SHOW);
+    // SWP_SHOWWINDOW is not overridden by a parent's STARTUPINFO/SW_HIDE.
+    SetWindowPos(window, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+    POINT cursor{};
+    GetCursorPos(&cursor);
+    editor.hover({cursor.x - editor.x, cursor.y - editor.y});
     SetForegroundWindow(window);
     SetFocus(window);
     MSG msg{};
@@ -667,8 +800,8 @@ int snip(const std::wstring& path, const std::wstring& mode, bool selectOnly) {
 void imageSelfTest(const std::wstring& path) {
     Editor editor(L"", L"region", false, true);
     editor.selection = {20, 16, 180, 112};
-    editor.marks.push_back({Tool::Mosaic, {{40, 40}, {100, 90}}, L"", RGB(0, 0, 0), 3});
-    editor.marks.push_back({Tool::Rectangle, {{120, 30}, {160, 70}}, L"", RGB(255, 0, 0), 3});
+    editor.commitMark({Tool::Mosaic, {{40, 40}, {100, 90}}, L"", RGB(0, 0, 0), 3});
+    editor.commitMark({Tool::Rectangle, {{120, 30}, {160, 70}}, L"", RGB(255, 0, 0), 3});
     Bitmap result(160, 96);
     editor.renderSelection(result);
     savePNG(result, path);
@@ -710,6 +843,17 @@ void imageSelfTest(const std::wstring& path) {
     editor.renderSelection(result);
     if (GetPixel(result.dc, 25, 14) != RGB(0, 255, 0))
         throw std::runtime_error("Ellipse annotation was not exported");
+    editor.activeMark = 0;
+    editor.clickAction(32);
+    if (editor.marks[0].width != 9)
+        throw std::runtime_error("Existing annotation width did not update");
+    editor.undoMark();
+    if (editor.marks[0].width != 3)
+        throw std::runtime_error("Annotation style undo failed");
+    editor.redoMark();
+    if (editor.marks[0].width != 9)
+        throw std::runtime_error("Annotation style redo failed");
+    editor.activeMark = -1;
     editor.selected = true;
     editor.selection = {90, 65, 1000, 465};
     editor.marks = {{Tool::Rectangle, {{160, 130}, {600, 270}}, L"", RGB(236, 74, 92), 3},

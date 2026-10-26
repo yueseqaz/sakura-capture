@@ -1,11 +1,24 @@
 package main
 
 import (
+	"image"
 	"testing"
 
 	"github.com/egoist/mygo/ui"
 	"github.com/yueseqaz/sakura-capture/internal/core"
 )
+
+func TestParseRegion(t *testing.T) {
+	r, err := parseRegion("REGION -1920 0 1920 1080")
+	if err != nil || r != image.Rect(-1920, 0, 0, 1080) {
+		t.Fatalf("negative monitor coordinates: %v %v", r, err)
+	}
+	for _, out := range []string{"", "CANCELLED", "REGION 0 0 0 1080", "REGION 0 0 -1 1080", "REGION x 0 1920 1080", "REGION 0 0 1920 1080 extra", "REGION 0 0 99999 1080"} {
+		if _, err := parseRegion(out); err == nil {
+			t.Errorf("accepted malformed region %q", out)
+		}
+	}
+}
 
 func TestCaptureView(t *testing.T) {
 	a := &application{store: core.Defaults(), status: "就绪"}

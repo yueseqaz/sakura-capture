@@ -79,6 +79,13 @@ jobs:
           $hash = (Get-FileHash SakuraCapture-windows-x64.zip -Algorithm SHA256).Hash.ToLower()
           "$hash  SakuraCapture-windows-x64.zip" | Out-File -Encoding ascii SHA256SUMS.txt
           "## Windows portable build`n`nDownload the **SakuraCapture-windows-x64** artifact below. Extract it completely and run **SakuraCapture.exe**. Both executables must remain together.`n`nSHA-256: ``$hash``" >> $env:GITHUB_STEP_SUMMARY
+      - name: Test real screenshot windows and recording dock interaction
+        shell: pwsh
+        env:
+          SAKURA_WINDOWS_E2E: ${{ github.workspace }}/dist
+        run: |
+          go test -v -run TestWindows -count=1 -timeout 4m .
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - name: Launch native GUI and test single-instance handover
         shell: pwsh
         run: ./scripts/smoke-ui.ps1
