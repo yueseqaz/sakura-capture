@@ -82,6 +82,6 @@ inline RECT normalized(POINT a, POINT b) {
 int snip(const std::wstring& path, const std::wstring& mode, bool selectOnly);
 int record(const std::wstring& path, int x, int y, int w, int h, int fps, int bitrate,
            const std::wstring& audio, bool cursor, bool synthetic = false);
-int inspect(const std::wstring& path);
+int inspect(const std::wstring& path, bool synthetic = false);
 void imageSelfTest(const std::wstring& path);
 void savePNG(Bitmap& image, const std::wstring& path);

@@ -17,6 +17,17 @@ func prepareCommand(c *exec.Cmd) {
 }
 
 func excludeWindow(w uintptr) error {
+	// Older Windows can accept 0x11 but behave like WDA_MONITOR (a black
+	// rectangle). Check the real build, not the manifest-sensitive version API.
+	var version struct {
+		Size, Major, Minor, Build, Platform uint32
+		ServicePack                         [128]uint16
+	}
+	version.Size = uint32(unsafe.Sizeof(version))
+	status, _, _ := syscall.NewLazyDLL("ntdll.dll").NewProc("RtlGetVersion").Call(uintptr(unsafe.Pointer(&version)))
+	if status != 0 || version.Major < 10 || (version.Major == 10 && version.Build < 19041) {
+		return fmt.Errorf("控制台录制排除需要 Windows 10 2004 或更新版本，当前系统不支持，已取消录制")
+	}
 	r, _, err := user32.NewProc("SetWindowDisplayAffinity").Call(w, 0x11)
 	if r == 0 {
 		return fmt.Errorf("无法将控制台排除在录屏之外（需要 Windows 10 2004 或更新版本）: %v", err)

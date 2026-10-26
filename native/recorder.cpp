@@ -414,7 +414,7 @@ int record(const std::wstring& path, int x, int y, int width, int height, int fp
     std::cout << "SAVED" << std::endl;
     return 0;
 }
-int inspect(const std::wstring& path) {
+int inspect(const std::wstring& path, bool synthetic) {
     int counts[2] = {0, 0};
     LONGLONG ends[2] = {0, 0};
     double energy[6][2]{};
@@ -482,13 +482,13 @@ int inspect(const std::wstring& path) {
         }
         ends[stream] = last;
     }
-    if (counts[0] < 80 || counts[1] < 10)
-        throw std::runtime_error("Self-test missing decoded video or audio");
+    if (counts[0] < (synthetic ? 80 : 1) || counts[1] < (synthetic ? 10 : 1))
+        throw std::runtime_error("Media validation missing decoded video or audio");
     if (std::llabs(ends[0] - ends[1]) > 5000000)
         throw std::runtime_error("Self-test A/V duration mismatch");
     const bool audible[6][2] = {{false, false}, {true, false},  {true, true},
                                 {false, true},  {false, false}, {true, false}};
-    for (int bin = 0; bin < 6; bin++) {
+    for (int bin = 0; synthetic && bin < 6; bin++) {
         if (!energyFrames[bin])
             throw std::runtime_error("Missing audio transition test samples");
         for (int channel = 0; channel < 2; channel++) {
@@ -497,8 +497,10 @@ int inspect(const std::wstring& path) {
                 throw std::runtime_error("Decoded audio mute/unmute transition failed");
         }
     }
-    std::cout << "AUDIO_TRANSITIONS_OK silent/system/both/mic/silent/system" << std::endl;
-    std::cout << "SELFTEST_OK decoded_video=" << counts[0] << " decoded_audio=" << counts[1]
+    if (synthetic)
+        std::cout << "AUDIO_TRANSITIONS_OK silent/system/both/mic/silent/system" << std::endl;
+    std::cout << (synthetic ? "SELFTEST_OK" : "MEDIA_VALIDATION_OK")
+              << " decoded_video=" << counts[0] << " decoded_audio=" << counts[1]
               << std::endl;
     return 0;
 }

@@ -30,7 +30,7 @@ int wmain(int argc, wchar_t** argv) {
         else if (command == L"selftest" && argc == 3) {
             result = record(argv[2], 0, 0, 640, 360, 30, 1500000, L"none", true, true);
             if (!result) {
-                result = inspect(argv[2]);
+                result = inspect(argv[2], true);
                 imageSelfTest(std::wstring(argv[2]) + L".png");
             }
         } else if (command == L"inspect" && argc == 3)

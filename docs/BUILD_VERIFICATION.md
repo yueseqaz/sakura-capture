@@ -1,5 +1,20 @@
 # Build verification — 2026-10-26
 
+## v0.2.2 Regression Coverage
+
+New tests operate actual Windows HWNDs after building the distributed executables, rather than relying only on headless view rendering:
+
+- Launch the screenshot engine with production flags and with legacy `HideWindow` flags; click a monitor, press Enter and decode the saved PNG.
+- Drag a region, draw a rectangle, select it using V, change 3px to 9px and check the actual exported edge pixels; cancel and reselect without leaving the selector running.
+- Launch the packaged GUI with isolated settings, click screen recording, complete selection and find the visible recording dock.
+- Check always-on-top and `WDA_EXCLUDEFROMCAPTURE`, then BitBlt a pixel under the dock over a known white background. The captured pixel must be white, not dock content or a black placeholder.
+- Click pause, resume and stop in the native dock; wait for actual engine acknowledgements and decode the resulting real MP4.
+- Keep the synthetic 90-frame / six-audio-phase selftest separate from generic MP4 validation; real silent recordings must not be required to contain synthetic test tones.
+
+The old launcher used `STARTF_USESHOWWINDOW/SW_HIDE`, which could suppress the engine's first `ShowWindow` call. Earlier render and startup tests did not cover that user-visible selection failure. The launcher now uses `CREATE_NO_WINDOW`; the native overlay also uses `SWP_SHOWWINDOW` defensively. Recording does not proceed if capture exclusion cannot be confirmed, including on pre-2004 Windows builds which can interpret exclusion as a black placeholder.
+
+These hosted Windows interaction checks do not certify physical audio hardware, mixed-DPI displays or all display drivers. The physical acceptance checklist remains required before a stable release.
+
 ## v0.2.0
 
 Verified functional candidate: `ecabf04`.
