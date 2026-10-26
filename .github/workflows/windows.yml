@@ -71,7 +71,7 @@ jobs:
           }
           Copy-Item README.md, LICENSE, THIRD_PARTY_NOTICES.md -Destination dist
           New-Item -ItemType Directory -Path dist/assets | Out-Null
-          Copy-Item assets/screenshot.png, assets/recording-dock.png -Destination dist/assets
+          Copy-Item assets/screenshot.png, assets/recording-dock.png, assets/floating-toolbar.png -Destination dist/assets
           Copy-Item docs/USER_GUIDE.zh-CN.md -Destination dist/使用说明.md
           ./scripts/collect-licenses.ps1
           Get-ChildItem dist/*.exe | ForEach-Object { '{0}: {1:N2} MB' -f $_.Name, ($_.Length / 1MB) }

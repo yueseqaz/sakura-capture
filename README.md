@@ -4,7 +4,9 @@ A small, offline Windows screenshot and screen-recording application. Native Go 
 
 **中文使用说明：[docs/USER_GUIDE.zh-CN.md](docs/USER_GUIDE.zh-CN.md)**
 
-![Native capture interface](assets/screenshot.png)
+![Persistent floating toolbar](assets/floating-toolbar.png)
+
+![Screenshot annotation editor](assets/screenshot.png)
 
 ![Floating recording dock](assets/recording-dock.png)
 
@@ -22,11 +24,12 @@ Tagged versions create a **draft** GitHub Release for manual verification before
 ## Included
 
 - Region, monitor and visible-window-region screenshots, saved as PNG and copied to the clipboard.
-- Screenshot rectangles, ellipses, arrows, freehand drawing, text, numbered steps and destructive mosaic; visible color/width palettes, tool hints and undo/redo.
+- Editable screenshot rectangles, ellipses, arrows, lines, freehand drawing, highlights, text, numbered steps and destructive mosaic. Select/move/resize/delete/duplicate, text re-editing and undo/redo.
+- Continuous width slider, contextual color popover with RGB/HEX and original-image eyedropper; copy-only and save+copy actions.
 - Region, monitor and visible-window-region recording to H.264 / AAC MP4.
 - Default system audio (WASAPI loopback), default microphone, mixed audio, or silent recording.
 - 15 / 30 / 60 FPS, bitrate presets, mouse cursor capture, optional countdown, pause/resume and graceful stop.
-- Redesigned native MyGo workspace and draggable always-on-top recording dock with pause/resume, live speaker/microphone toggles and stop/save.
+- Persistent always-on-top floating toolbar from startup: drag to either screen edge to collapse, hover to expand, remembered position and monitor recovery. The same window switches to recording controls with pause/resume, live speaker/microphone toggles and stop/save.
 - Tray, configurable global shortcuts, local history and persistent settings.
 - Windows-native engine built with the static MSVC runtime; no additional browser or .NET runtime.
 
@@ -61,6 +64,8 @@ The workflow tests Go configuration/state and headless native UI, builds both bi
 ## Architecture
 
 - `main.go`: native MyGo application and workflow coordination.
+- `floating_dock.go`, `recording_controls.go`: persistent edge toolbar, recording controls and lifecycle.
+- `process_windows.go`: physical monitor coordinates and verified capture exclusion.
 - `internal/core`: configuration, history, output naming and unit tests.
 - `native/snip.cpp`: DPI-aware selection and GDI screenshot editor; WIC PNG and CF_DIB clipboard.
 - `native/recorder.cpp`: GDI frame capture, WASAPI shared capture, stereo mix, H.264/AAC sink writer, pause/resume and media smoke test.
