@@ -180,6 +180,7 @@ func (a *application) bindKeys() {
 }
 func (a *application) fail(e error) { a.status = e.Error(); a.restoreDock(); a.show() }
 func (a *application) screenshot(mode string) {
+	log.Printf("screenshot request: mode=%s busy=%t recording=%t", mode, a.busy, a.rec != nil)
 	if a.quitting || a.busy || a.rec != nil {
 		return
 	}
@@ -222,6 +223,7 @@ func (a *application) screenshot(mode string) {
 	}()
 }
 func (a *application) record(mode string) {
+	log.Printf("record request: mode=%s busy=%t recording=%t", mode, a.busy, a.rec != nil)
 	if a.quitting || a.busy || a.rec != nil {
 		return
 	}

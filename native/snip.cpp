@@ -38,6 +38,8 @@ struct Editor {
                            RGB(230, 124, 176), RGB(166, 177, 190), RGB(121, 87, 62)};
     int toolWidths[10] = {3, 3, 3, 3, 14, 28, 3, 3, 3, 20};
     COLORREF toolColors[10] = {};
+    std::wstring preferences;
+    std::vector<COLORREF> recentColors;
     bool paletteOpen = false, picking = false, sliderDragging = false, hexEditing = false;
     int channelDragging = -1, transform = 0, handle = -1;
     bool gestureChanged = false, hexReplace = false;
@@ -68,6 +70,34 @@ struct Editor {
         fakeCapture = fake;
         for (auto& c : toolColors)
             c = colors[0];
+        if (!fake) {
+            wchar_t root[32768];
+            DWORD length = GetEnvironmentVariableW(L"APPDATA", root, 32768);
+            if (length && length < 32768) {
+                std::wstring folder = std::wstring(root) + L"\\SakuraCapture";
+                CreateDirectoryW(folder.c_str(), nullptr);
+                preferences = folder + L"\\editor.ini";
+                for (int i = 0; i < 10; i++) {
+                    auto key = std::to_wstring(i);
+                    toolWidths[i] =
+                        std::clamp<int>(GetPrivateProfileIntW(L"width", key.c_str(), toolWidths[i],
+                                                              preferences.c_str()),
+                                        i == 5 ? 8 : 1, 64);
+                    toolColors[i] = GetPrivateProfileIntW(L"color", key.c_str(), colors[0],
+                                                          preferences.c_str()) &
+                                    0xffffff;
+                }
+                for (int i = 0; i < 6; i++) {
+                    UINT color = GetPrivateProfileIntW(L"recent", std::to_wstring(i).c_str(),
+                                                       0xffffffff, preferences.c_str());
+                    if (color <= 0xffffff)
+                        recentColors.push_back(color);
+                }
+                thickness = toolWidths[1];
+                colors[15] = toolColors[1];
+                colorIndex = 15;
+            }
+        }
         if (fake) {
             for (int row = 0; row < h; row++)
                 for (int col = 0; col < w; col++) {
@@ -84,6 +114,20 @@ struct Editor {
                            DEFAULT_PITCH, L"Microsoft YaHei UI");
     }
     ~Editor() {
+        if (!preferences.empty()) {
+            for (int i = 0; i < 10; i++) {
+                auto key = std::to_wstring(i), width = std::to_wstring(toolWidths[i]),
+                     color = std::to_wstring(toolColors[i]);
+                WritePrivateProfileStringW(L"width", key.c_str(), width.c_str(),
+                                           preferences.c_str());
+                WritePrivateProfileStringW(L"color", key.c_str(), color.c_str(),
+                                           preferences.c_str());
+            }
+            for (int i = 0; i < (int)recentColors.size(); i++)
+                WritePrivateProfileStringW(L"recent", std::to_wstring(i).c_str(),
+                                           std::to_wstring(recentColors[i]).c_str(),
+                                           preferences.c_str());
+        }
         if (inputFont)
             DeleteObject(inputFont);
         if (font)
@@ -361,6 +405,15 @@ struct Editor {
         colorIndex = 15;
         updateStyle(history);
         hexInput = colorHex(c);
+        if (history)
+            rememberColor(c);
+    }
+    void rememberColor(COLORREF c) {
+        recentColors.erase(std::remove(recentColors.begin(), recentColors.end(), c),
+                           recentColors.end());
+        recentColors.insert(recentColors.begin(), c);
+        if (recentColors.size() > 6)
+            recentColors.resize(6);
     }
     int sliderValue(POINT p, RECT r, int low, int high) {
         return low + (std::clamp<int>(p.x - r.left - 8, 0, r.right - r.left - 16) * (high - low) +
@@ -379,14 +432,14 @@ struct Editor {
     }
     RECT palette() {
         RECT bar = toolbar();
-        int top = bar.top - 228;
+        int top = bar.top - 264;
         if (top < uiVisible.top + 6)
             top = bar.bottom + 8;
         top = std::clamp<int>(top, uiVisible.top + 6,
-                              std::max<LONG>(uiVisible.top + 6, uiVisible.bottom - 226));
+                              std::max<LONG>(uiVisible.top + 6, uiVisible.bottom - 262));
         int left = std::clamp<int>(bar.left + 12, uiVisible.left + 6,
                                    std::max<LONG>(uiVisible.left + 6, uiVisible.right - 332));
-        return {left, top, left + 326, top + 220};
+        return {left, top, left + 326, top + 256};
     }
     RECT hexRect() {
         RECT r = palette();
@@ -405,6 +458,16 @@ struct Editor {
             rounded(dc, swatch, RGB(230, 229, 225), 24);
             InflateRect(&swatch, -2, -2);
             rounded(dc, swatch, colors[i], 20);
+        }
+        RECT recentLabel{r.left + 14, r.top + 216, r.left + 59, r.top + 246};
+        SetTextColor(dc, RGB(174, 188, 197));
+        DrawTextW(dc, L"最近", -1, &recentLabel, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        for (int i = 0; i < (int)recentColors.size(); i++) {
+            int cx = r.left + 76 + i * 43;
+            RECT chip{cx - 11, r.top + 221, cx + 11, r.top + 243};
+            rounded(dc, chip, RGB(222, 226, 230), 22);
+            InflateRect(&chip, -2, -2);
+            rounded(dc, chip, recentColors[i], 18);
         }
         const wchar_t* labels[] = {L"R", L"G", L"B"};
         int values[] = {GetRValue(colors[colorIndex]), GetGValue(colors[colorIndex]),
@@ -438,6 +501,16 @@ struct Editor {
             RECT swatch{cx - 15, cy - 15, cx + 15, cy + 15};
             if (PtInRect(&swatch, p)) {
                 chooseColor(colors[i]);
+                paletteOpen = false;
+                return true;
+            }
+        }
+        for (int i = 0; i < (int)recentColors.size(); i++) {
+            int cx = r.left + 76 + i * 43;
+            RECT chip{cx - 14, r.top + 218, cx + 14, r.top + 246};
+            if (PtInRect(&chip, p)) {
+                COLORREF chosen = recentColors[i];
+                chooseColor(chosen);
                 paletteOpen = false;
                 return true;
             }
@@ -625,9 +698,9 @@ struct Editor {
             rounded(buffer.dc, shadow, RGB(15, 18, 22), 18);
             rounded(buffer.dc, bar, RGB(32, 38, 43), 18);
             buttons.clear();
-            std::vector<std::wstring> names = {
-                L"选择", L"矩形", L"箭头", L"画笔", L"马赛克", L"文字", L"椭圆", L"序号",
-                L"直线", L"高亮", L"撤销", L"重做", L"重选",   L"复制", L"保存", L"取消"};
+            std::vector<std::wstring> names = {L"选择", L"矩形", L"箭头", L"画笔", L"打码", L"文字",
+                                               L"椭圆", L"序号", L"直线", L"高亮", L"撤销", L"重做",
+                                               L"重选", L"复制", L"保存", L"取消"};
             int actions[] = {40, 0, 1, 2, 3, 4, 5, 6, 41, 42, 7, 8, 9, 12, 10, 11};
             int cell = (bar.right - bar.left - 16) / (int)names.size();
             for (int i = 0; i < (int)names.size(); i++) {
@@ -819,8 +892,10 @@ struct Editor {
             SetFocus(window);
         }
         if (textEditing && activeMark >= 0 && activeMark < (int)marks.size() &&
-            marks[activeMark].text.empty())
+            marks[activeMark].text.empty()) {
             marks.erase(marks.begin() + activeMark);
+            activeMark = -1;
+        }
         textEditing = false;
         if (activeMark >= (int)marks.size())
             activeMark = -1;
@@ -905,6 +980,8 @@ struct Editor {
             checkpoint();
         mark.width = thickness;
         mark.color = colors[colorIndex];
+        toolWidths[(int)mark.tool] = thickness;
+        toolColors[(int)mark.tool] = mark.color;
     }
     RECT geometry(const Mark& mark) {
         RECT r{mark.points[0].x, mark.points[0].y, mark.points[0].x, mark.points[0].y};
@@ -986,6 +1063,13 @@ struct Editor {
         POINT p = bound({GET_X_LPARAM(lp), GET_Y_LPARAM(lp)});
         auto refresh = [&]() { InvalidateRect(window, nullptr, FALSE); };
         switch (msg) {
+        case WM_CTLCOLOREDIT:
+            if ((HWND)lp == textInput && activeMark >= 0) {
+                SetTextColor((HDC)wp, marks[activeMark].color);
+                SetBkColor((HDC)wp, RGB(255, 255, 255));
+                return (LRESULT)GetStockObject(WHITE_BRUSH);
+            }
+            break;
         case WM_COMMAND:
             if ((HWND)lp == textInput && HIWORD(wp) == EN_CHANGE) {
                 syncText();
@@ -1186,6 +1270,8 @@ struct Editor {
             return 0;
         case WM_LBUTTONUP:
             if (sliderDragging || channelDragging >= 0) {
+                if (channelDragging >= 0)
+                    rememberColor(colors[colorIndex]);
                 sliderDragging = false;
                 channelDragging = -1;
                 ReleaseCapture();

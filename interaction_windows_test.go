@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"image"
 	"image/png"
 	"os"
 	"os/exec"
@@ -47,6 +48,9 @@ type interactionProcess struct {
 func launchInteraction(t *testing.T, cmd *exec.Cmd) *interactionProcess {
 	t.Helper()
 	p := &interactionProcess{cmd: cmd, done: make(chan struct{})}
+	if cmd.Env == nil {
+		cmd.Env = append(os.Environ(), "APPDATA="+t.TempDir())
+	}
 	cmd.Stdout, cmd.Stderr = &p.log, &p.log
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
@@ -108,7 +112,54 @@ func eventuallyInteraction(t *testing.T, description string, p *interactionProce
 		}
 		time.Sleep(80 * time.Millisecond)
 	}
+	interactionFailureScreenshot()
 	t.Fatalf("timeout: %s\n%s", description, p.log.text())
+}
+
+func interactionFailureScreenshot() {
+	root := os.Getenv("RUNNER_TEMP")
+	if root == "" {
+		return
+	}
+	w, _, _ := user32.NewProc("GetSystemMetrics").Call(0)
+	h, _, _ := user32.NewProc("GetSystemMetrics").Call(1)
+	if w == 0 || h == 0 || w*h > 40000000 {
+		return
+	}
+	gdi := syscall.NewLazyDLL("gdi32.dll")
+	dc, _, _ := user32.NewProc("GetDC").Call(0)
+	defer user32.NewProc("ReleaseDC").Call(0, dc)
+	mem, _, _ := gdi.NewProc("CreateCompatibleDC").Call(dc)
+	defer gdi.NewProc("DeleteDC").Call(mem)
+	info := struct {
+		Size                   uint32
+		Width, Height          int32
+		Planes, Bits           uint16
+		Compression, ImageSize uint32
+		X, Y                   int32
+		Used, Important        uint32
+	}{Size: 40, Width: int32(w), Height: -int32(h), Planes: 1, Bits: 32}
+	var pixels unsafe.Pointer
+	bmp, _, _ := gdi.NewProc("CreateDIBSection").Call(dc, uintptr(unsafe.Pointer(&info)), 0, uintptr(unsafe.Pointer(&pixels)), 0, 0)
+	if bmp == 0 || pixels == 0 {
+		return
+	}
+	defer gdi.NewProc("DeleteObject").Call(bmp)
+	old, _, _ := gdi.NewProc("SelectObject").Call(mem, bmp)
+	defer gdi.NewProc("SelectObject").Call(mem, old)
+	gdi.NewProc("BitBlt").Call(mem, 0, 0, w, h, dc, 0, 0, 0x40cc0020)
+	gdi.NewProc("GdiFlush").Call()
+	raw := unsafe.Slice((*byte)(pixels), int(w*h*4))
+	im := image.NewNRGBA(image.Rect(0, 0, int(w), int(h)))
+	for i := 0; i < len(raw); i += 4 {
+		im.Pix[i], im.Pix[i+1], im.Pix[i+2], im.Pix[i+3] = raw[i+2], raw[i+1], raw[i], 255
+	}
+	dir := filepath.Join(root, "sakura-ui")
+	_ = os.MkdirAll(dir, 0755)
+	if f, err := os.Create(filepath.Join(dir, "interaction-failure.png")); err == nil {
+		_ = png.Encode(f, im)
+		_ = f.Close()
+	}
 }
 
 func interactionMessage(w uintptr, msg uint32, wp, lp uintptr) {
@@ -267,7 +318,7 @@ func TestWindowsScreenshotInteraction(t *testing.T) {
 		interactionDrag(w, 240, 190, 260, 210)
 		interactionDrag(w, 420, 280, 440, 300)
 		interactionClick(w, 146, 455) // current color opens a popover
-		interactionClick(w, 153, 184) // blue preset in the popover
+		interactionClick(w, 153, 148) // blue preset in the popover
 		interactionKey(w, 13)
 		select {
 		case <-p.done:
@@ -312,6 +363,64 @@ func TestWindowsScreenshotInteraction(t *testing.T) {
 		}
 		if _, err := os.Stat(out); !os.IsNotExist(err) {
 			t.Fatalf("copy-only created a file: %v", err)
+		}
+	})
+	t.Run("native-text-reedit", func(t *testing.T) {
+		out := filepath.Join(t.TempDir(), "text.png")
+		cmd := exec.Command(filepath.Join(dist, "sakura-engine.exe"), "snip", out, "region")
+		prepareCommand(cmd)
+		p := launchInteraction(t, cmd)
+		var w uintptr
+		eventuallyInteraction(t, "text screenshot", p, func() bool { w = interactionWindow(cmd.Process.Pid, "SakuraCaptureOverlay", ""); return w != 0 })
+		interactionDrag(w, 60, 80, 560, 380)
+		interactionKey(w, 'T')
+		interactionClick(w, 150, 150)
+		class, _ := syscall.UTF16PtrFromString("EDIT")
+		input, _, _ := user32.NewProc("FindWindowExW").Call(w, 0, uintptr(unsafe.Pointer(class)), 0)
+		if input == 0 {
+			t.Fatal("native text field missing; IME/caret editing cannot work")
+		}
+		text, _ := syscall.UTF16PtrFromString("原生文字")
+		user32.NewProc("SetWindowTextW").Call(input, uintptr(unsafe.Pointer(text)))
+		interactionKey(input, 13)
+		interactionKey(w, 'V')
+		interactionMessage(w, 0x203, 1, interactionPoint(155, 155))
+		input, _, _ = user32.NewProc("FindWindowExW").Call(w, 0, uintptr(unsafe.Pointer(class)), 0)
+		if input == 0 {
+			t.Fatal("double-click did not reopen native text editor")
+		}
+		text, _ = syscall.UTF16PtrFromString("重新编辑成功")
+		user32.NewProc("SetWindowTextW").Call(input, uintptr(unsafe.Pointer(text)))
+		interactionKey(input, 13)
+		interactionKey(w, 13)
+		select {
+		case <-p.done:
+			if p.err != nil || !strings.Contains(p.log.text(), "SAVED") {
+				t.Fatal(p.err, p.log.text())
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("re-edited text export did not finish")
+		}
+		f, err := os.Open(out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer f.Close()
+		im, err := png.Decode(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pixels := 0
+		for y := 70; y < 110; y++ {
+			for x := 90; x < 300; x++ {
+				r, g, b, _ := im.At(x, y).RGBA()
+				if r == 236*257 && g == 74*257 && b == 92*257 {
+					pixels++
+				}
+			}
+		}
+		if pixels < 30 {
+			t.Fatalf("re-edited text not present in exported pixels: %d", pixels)
 		}
 	})
 }
@@ -428,7 +537,7 @@ func TestWindowsRecordingDockInteraction(t *testing.T) {
 	prepareCommand(cmd)
 	cmd.Env = append(os.Environ(), "APPDATA="+root)
 	p := launchInteraction(t, cmd)
-	a := &application{store: s, recording: true}
+	a := &application{store: s}
 	var main, overlay, dock uintptr
 	eventuallyInteraction(t, "persistent startup dock", p, func() bool { dock = interactionWindow(cmd.Process.Pid, "", dockTitle); return dock != 0 })
 	originalDock := dock
@@ -440,6 +549,7 @@ func TestWindowsRecordingDockInteraction(t *testing.T) {
 		t.Fatalf("second instance: %v %s", err, output)
 	}
 	eventuallyInteraction(t, "main window", p, func() bool { main = interactionWindow(cmd.Process.Pid, "", "Sakura Capture"); return main != 0 })
+	time.Sleep(600 * time.Millisecond) // Show schedules the initially hidden surface's first frame.
 	interactionClickLabel(t, main, a.view, "屏幕录屏")
 	eventuallyInteraction(t, "recording selection", p, func() bool {
 		// The selector is a child process: enumerate by class independently.
@@ -451,6 +561,7 @@ func TestWindowsRecordingDockInteraction(t *testing.T) {
 		return dock != 0
 	})
 	eventuallyInteraction(t, "encoder READY", p, func() bool { return strings.Contains(p.log.text(), "capture engine: READY") })
+	a.recording = true
 	var affinity uint32
 	ok, _, _ := user32.NewProc("GetWindowDisplayAffinity").Call(dock, uintptr(unsafe.Pointer(&affinity)))
 	if ok == 0 || affinity != 0x11 {

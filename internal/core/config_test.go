@@ -13,6 +13,7 @@ func TestRoundTrip(t *testing.T) {
 		t.Fatal(e)
 	}
 	s.Config.Cursor = false
+	s.Config.DockX, s.Config.DockY, s.Config.DockSaved, s.Config.DockEdge = -1920, 80, true, "left"
 	s.Add("中文.png", "截图")
 	if e = s.Save(p); e != nil {
 		t.Fatal(e)
@@ -20,6 +21,9 @@ func TestRoundTrip(t *testing.T) {
 	r, e := Load(p)
 	if e != nil || r.Config.Cursor || len(r.History) != 1 {
 		t.Fatalf("roundtrip: %+v %v", r, e)
+	}
+	if !r.Config.DockSaved || r.Config.DockX != -1920 || r.Config.DockY != 80 || r.Config.DockEdge != "left" {
+		t.Fatal("floating dock placement was not persisted", r.Config)
 	}
 }
 func TestCorruptConfig(t *testing.T) {
@@ -56,6 +60,18 @@ func TestOutput(t *testing.T) {
 	b, _ := s.Config.Output(".mp4")
 	if a == b || filepath.Ext(a) != ".mp4" {
 		t.Fatal(a, b)
+	}
+	seen := map[string]bool{a: true, b: true}
+	for range 1000 {
+		path, err := s.Config.Output(".png")
+		if err != nil || seen[path] {
+			t.Fatalf("rapid capture filename collision: %q %v", path, err)
+		}
+		seen[path] = true
+	}
+	files, err := os.ReadDir(s.Config.Directory)
+	if err != nil || len(files) != 0 {
+		t.Fatalf("output naming must not leave empty files on cancellation: %v %v", files, err)
 	}
 }
 func TestModes(t *testing.T) {

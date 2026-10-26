@@ -1,11 +1,26 @@
 $ErrorActionPreference = 'Stop'
 $exe = Join-Path (Get-Location) 'dist/SakuraCapture.exe'
 $app = Start-Process -FilePath $exe -PassThru
+Add-Type @'
+using System;
+using System.Runtime.InteropServices;
+public static class SakuraSmokeWindows {
+  private delegate bool EnumProc(IntPtr w, IntPtr p);
+  [DllImport("user32.dll")] private static extern bool EnumWindows(EnumProc f, IntPtr p);
+  [DllImport("user32.dll")] private static extern bool IsWindowVisible(IntPtr w);
+  [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr w, out uint p);
+  public static bool HasVisibleWindow(int pid) {
+    bool found = false;
+    EnumWindows((w, _) => { uint p; GetWindowThreadProcessId(w, out p); if(p == pid && IsWindowVisible(w)) found = true; return !found; }, IntPtr.Zero);
+    return found;
+  }
+}
+'@
 try {
   Start-Sleep -Seconds 5
   $app.Refresh()
   if ($app.HasExited) { throw "Native GUI exited unexpectedly: $($app.ExitCode)" }
-  if (!$app.MainWindowHandle) { throw 'Native GUI did not create a visible window' }
+  if (![SakuraSmokeWindows]::HasVisibleWindow($app.Id)) { throw 'Native GUI did not create a visible floating toolbar' }
   $before = $app.TotalProcessorTime.TotalSeconds
   Start-Sleep -Seconds 2
   $app.Refresh()
