@@ -24,6 +24,6 @@ void savePNG(Bitmap& image,const std::wstring& path){
  ComPtr<IWICBitmapEncoder> encoder;check(factory->CreateEncoder(GUID_ContainerFormatPng,nullptr,&encoder),"Create PNG encoder");check(encoder->Initialize(stream.Get(),WICBitmapEncoderNoCache),"Initialize PNG encoder");
  ComPtr<IWICBitmapFrameEncode> frame;check(encoder->CreateNewFrame(&frame,nullptr),"Create PNG frame");check(frame->Initialize(nullptr),"Initialize PNG frame");check(frame->SetSize(image.w,image.h),"Set PNG size");
  WICPixelFormatGUID format=GUID_WICPixelFormat32bppBGR;check(frame->SetPixelFormat(&format),"Set PNG format");
- std::vector<BYTE> topDown((size_t)image.w*image.h*4);for(int y=0;y<image.h;y++)memcpy(topDown.data()+(size_t)y*image.w*4,image.pixels+(size_t)(image.h-1-y)*image.w*4,(size_t)image.w*4);
+ std::vector<BYTE> topDown((size_t)image.w*image.h*4);for(int y=0;y<image.h;y++)memcpy(topDown.data()+(size_t)y*image.w*4,image.pixels+(size_t)(image.topDown?y:image.h-1-y)*image.w*4,(size_t)image.w*4);
  check(frame->WritePixels(image.h,image.w*4,(UINT)topDown.size(),topDown.data()),"Write PNG pixels");check(frame->Commit(),"Commit PNG frame");check(encoder->Commit(),"Commit PNG");
 }

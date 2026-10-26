@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"image"
 	"image/color"
@@ -31,9 +32,15 @@ type application struct {
 	started                                     time.Time
 	elapsed                                     int
 	registered                                  []string
+	cancelPreparation                           context.CancelFunc
 }
 
 func main() {
+	mygo.App.SetName("Sakura Capture")
+	if !mygo.App.RequestSingleInstanceLock() {
+		return
+	}
+	mygo.Theme.SetSource(mygo.ThemeLight)
 	root, e := os.UserConfigDir()
 	if e != nil {
 		log.Fatal(e)
@@ -44,6 +51,7 @@ func main() {
 		a.status = e.Error()
 	}
 	mygo.App.WhenReady(a.ready)
+	mygo.App.OnSecondInstance(func([]string, string) { a.dispatch(a.show) })
 	if e = mygo.App.Run(); e != nil {
 		log.Fatal(e)
 	}
@@ -65,7 +73,7 @@ func (a *application) save() {
 	}
 }
 func (a *application) ready() {
-	a.win = mygo.NewWindow(mygo.WindowOptions{Title: "Sakura Capture", Width: 760, Height: 740, MinWidth: 640, MinHeight: 620, Content: ui.View(a.view)})
+	a.win = mygo.NewWindow(mygo.WindowOptions{Title: "Sakura Capture", Width: 760, Height: 800, MinWidth: 640, MinHeight: 620, Content: ui.View(a.view)})
 	a.win.OnClose(func(e *mygo.CloseEvent) {
 		if !a.quitting && a.tray != nil {
 			e.PreventDefault()
@@ -194,49 +202,95 @@ func (a *application) record(mode string) {
 		a.fail(e)
 		return
 	}
+	ctx, cancel := context.WithCancel(context.Background())
 	a.save()
 	a.busy = true
+	a.cancelPreparation = cancel
 	a.win.Hide()
 	go func() {
 		time.Sleep(220 * time.Millisecond)
-		out, e := runEngine("select", mode)
+		out, e := runEngineContext(ctx, "select", mode)
 		if e != nil {
-			a.dispatch(func() { a.busy = false; a.fail(e) })
+			a.dispatch(func() {
+				wasCanceled := ctx.Err() != nil
+				a.endPreparation()
+				if !wasCanceled {
+					a.fail(e)
+				}
+			})
 			return
 		}
 		fields := strings.Fields(out)
 		if len(fields) != 5 || fields[0] != "REGION" {
-			a.dispatch(func() { a.busy = false; a.status = "已取消录制"; a.show() })
+			a.dispatch(a.endPreparation)
 			return
 		}
 		n, _ := strconv.Atoi(cfg.Countdown)
 		for ; n > 0; n-- {
 			left := n
-			a.dispatch(func() { a.status = fmt.Sprintf("%d 秒后开始录制…", left) })
-			time.Sleep(time.Second)
+			a.dispatch(func() {
+				if ctx.Err() != nil {
+					return
+				}
+				a.status = fmt.Sprintf("%d 秒后开始录制…", left)
+				if a.control == nil {
+					a.showCountdown()
+				}
+			})
+			select {
+			case <-ctx.Done():
+				a.dispatch(a.endPreparation)
+				return
+			case <-time.After(time.Second):
+			}
 		}
 		args := append([]string{"record", path}, fields[1:]...)
 		args = append(args, cfg.FPS, cfg.Bitrate(), cfg.AudioMode(), strconv.FormatBool(cfg.Cursor))
 		a.dispatch(func() {
+			if ctx.Err() != nil {
+				a.endPreparation()
+				return
+			}
+			a.cancelPreparation = nil
+			cancel()
 			en, e := startEngine(args, func(event string) {
 				if event == "READY" {
 					a.dispatch(func() {
 						a.busy = false
 						a.recording = true
 						a.started = time.Now()
+						a.elapsed = 0
 						a.status = "录制中"
 						a.showControl()
 					})
 				}
 			})
 			if e != nil {
-				a.busy = false
+				a.endPreparation()
 				a.fail(e)
 				return
 			}
 			a.rec = en
+			done := make(chan struct{})
+			go func() {
+				ticker := time.NewTicker(time.Second)
+				defer ticker.Stop()
+				for {
+					select {
+					case <-done:
+						return
+					case <-ticker.C:
+						a.dispatch(func() {
+							if a.rec == en && a.recording && !a.paused && !a.stopping {
+								a.elapsed++
+							}
+						})
+					}
+				}
+			}()
 			go func() {
 				err := en.wait()
+				close(done)
 				a.dispatch(func() {
 					a.busy = false
 					a.recording = false
@@ -265,6 +319,10 @@ func (a *application) record(mode string) {
 	}()
 }
 func (a *application) stop() {
+	if a.cancelPreparation != nil {
+		a.cancelPreparation()
+		return
+	}
 	if a.rec == nil || a.stopping {
 		return
 	}
@@ -293,6 +351,10 @@ func (a *application) pause() {
 	a.paused = !a.paused
 }
 func (a *application) showControl() {
+	if a.control != nil {
+		a.control.Destroy()
+		a.control = nil
+	}
 	a.control = mygo.NewWindow(mygo.WindowOptions{Title: "Sakura · 录制中", Width: 380, Height: 130, AlwaysOnTop: true, DisableResize: true, DisableMaximize: true, Content: ui.View(func(c *ui.Context) {
 		ui.Column(c).Fill().Padding(14).Gap(10).Children(func() {
 			label := "● 正在录制"
@@ -302,7 +364,7 @@ func (a *application) showControl() {
 			if a.stopping {
 				label = "正在保存…"
 			}
-			ui.Text(c, label).Bold()
+			ui.Text(c, fmt.Sprintf("%s  %02d:%02d", label, a.elapsed/60, a.elapsed%60)).Bold()
 			ui.Row(c).Gap(8).Children(func() {
 				p := "暂停"
 				if a.paused {
@@ -317,6 +379,31 @@ func (a *application) showControl() {
 	a.control.OnClose(func(e *mygo.CloseEvent) { e.PreventDefault(); a.stop() })
 	// The platform helper applies capture exclusion to every window of this process.
 	excludeWindow(a.control.NativeHandle())
+}
+func (a *application) endPreparation() {
+	if a.cancelPreparation != nil {
+		a.cancelPreparation()
+		a.cancelPreparation = nil
+	}
+	a.busy = false
+	if a.control != nil {
+		a.control.Destroy()
+		a.control = nil
+	}
+	a.status = "已取消录制"
+	a.show()
+}
+func (a *application) showCountdown() {
+	a.control = mygo.NewWindow(mygo.WindowOptions{
+		Title: "Sakura · 准备录制", Width: 320, Height: 120, AlwaysOnTop: true,
+		DisableResize: true, Content: ui.View(func(c *ui.Context) {
+			ui.Column(c).Fill().Padding(16).Gap(12).Children(func() {
+				ui.Text(c, a.status).Bold()
+				ui.Button(c, "取消录制").OnClick(a.stop)
+			})
+		}),
+	})
+	a.control.OnClose(func(e *mygo.CloseEvent) { e.PreventDefault(); a.stop() })
 }
 func section(c *ui.Context, title, detail string, body func()) {
 	ui.Column(c).FillWidth().Padding(20).Gap(12).Radius(12).Background(ui.RGB(255, 255, 255)).Children(func() {

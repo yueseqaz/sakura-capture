@@ -30,9 +30,9 @@
 using Microsoft::WRL::ComPtr;
 inline void check(HRESULT hr,const char* operation){if(FAILED(hr)){char text[160];sprintf_s(text,"%s (HRESULT 0x%08lX)",operation,(unsigned long)hr);throw std::runtime_error(text);}}
 struct Bitmap {
- HDC dc=nullptr;HBITMAP bitmap=nullptr;HGDIOBJ old=nullptr;BYTE* pixels=nullptr;int w=0,h=0;
- Bitmap(int width,int height):w(width),h(height){
- dc=CreateCompatibleDC(nullptr);BITMAPINFO info{};info.bmiHeader.biSize=sizeof(BITMAPINFOHEADER);info.bmiHeader.biWidth=w;info.bmiHeader.biHeight=h;info.bmiHeader.biPlanes=1;info.bmiHeader.biBitCount=32;info.bmiHeader.biCompression=BI_RGB;
+ HDC dc=nullptr;HBITMAP bitmap=nullptr;HGDIOBJ old=nullptr;BYTE* pixels=nullptr;int w=0,h=0;bool topDown=false;
+ Bitmap(int width,int height,bool top=false):w(width),h(height),topDown(top){
+ dc=CreateCompatibleDC(nullptr);BITMAPINFO info{};info.bmiHeader.biSize=sizeof(BITMAPINFOHEADER);info.bmiHeader.biWidth=w;info.bmiHeader.biHeight=topDown?-h:h;info.bmiHeader.biPlanes=1;info.bmiHeader.biBitCount=32;info.bmiHeader.biCompression=BI_RGB;
  bitmap=CreateDIBSection(dc,&info,DIB_RGB_COLORS,(void**)&pixels,nullptr,0);
  if(!dc||!bitmap)throw std::runtime_error("Cannot allocate screen bitmap");old=SelectObject(dc,bitmap);
  }

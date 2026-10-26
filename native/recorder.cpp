@@ -43,7 +43,8 @@ int record(const std::wstring& path,int x,int y,int width,int height,int fps,int
  DWORD audioStream=0;
  if(sound){ComPtr<IMFMediaType> encoded;check(MFCreateMediaType(&encoded),"Create AAC type");audioType(encoded.Get(),MFAudioFormat_AAC);check(encoded->SetUINT32(MF_MT_AUDIO_AVG_BYTES_PER_SECOND,20000),"Set AAC bitrate");check(writer->AddStream(encoded.Get(),&audioStream),"Add AAC stream");ComPtr<IMFMediaType> pcm;check(MFCreateMediaType(&pcm),"Create PCM type");audioType(pcm.Get(),MFAudioFormat_PCM);check(pcm->SetUINT32(MF_MT_AUDIO_BLOCK_ALIGNMENT,4),"Set PCM alignment");check(pcm->SetUINT32(MF_MT_AUDIO_AVG_BYTES_PER_SECOND,192000),"Set PCM bandwidth");check(writer->SetInputMediaType(audioStream,pcm.Get(),nullptr),"Configure AAC encoder");}
  Audio system(true),microphone(false);if(!synthetic){if(audio==L"system"||audio==L"both")system.start();if(audio==L"mic"||audio==L"both")microphone.start();}
- check(writer->BeginWriting(),"Start MP4 writer");Bitmap frame(w,h);
+ // The sink writer consumes positive-stride RGB32 as top-down scanlines.
+ check(writer->BeginWriting(),"Start MP4 writer");Bitmap frame(w,h,true);
  if(!synthetic)std::thread([](){std::string line;while(std::getline(std::cin,line)){if(line=="stop"){stopped=true;break;}if(line=="pause")paused=true;if(line=="resume")paused=false;}stopped=true;}).detach();
  EXECUTION_STATE awake=SetThreadExecutionState(ES_CONTINUOUS|ES_SYSTEM_REQUIRED|ES_DISPLAY_REQUIRED);(void)awake;
  std::cout<<"READY"<<std::endl;
@@ -55,7 +56,8 @@ int record(const std::wstring& path,int x,int y,int width,int height,int fps,int
  if(timestamp<=lastVideo)timestamp=lastVideo+1;
  if(synthetic){for(int row=0;row<h;row++){for(int col=0;col<w;col++){size_t at=((size_t)row*w+col)*4;frame.pixels[at]=(BYTE)((col+count*4)%256);frame.pixels[at+1]=(BYTE)(row%256);frame.pixels[at+2]=100;frame.pixels[at+3]=255;}}}
  else{frame.capture(x,y);if(cursor){CURSORINFO ci{sizeof(ci)};if(GetCursorInfo(&ci)&&(ci.flags&CURSOR_SHOWING)){ICONINFO icon{};if(GetIconInfo(ci.hCursor,&icon)){DrawIconEx(frame.dc,ci.ptScreenPos.x-x-icon.xHotspot,ci.ptScreenPos.y-y-icon.yHotspot,ci.hCursor,0,0,0,nullptr,DI_NORMAL);if(icon.hbmMask)DeleteObject(icon.hbmMask);if(icon.hbmColor)DeleteObject(icon.hbmColor);}}}}
- writeSample(writer.Get(),video,frame.pixels,w*h*4,timestamp,10000000/fps);lastVideo=timestamp;
+ if(synthetic){RECT marker{0,0,40,40};FillRect(frame.dc,&marker,(HBRUSH)GetStockObject(WHITE_BRUSH));SetBkMode(frame.dc,TRANSPARENT);SetTextColor(frame.dc,RGB(255,255,255));TextOutW(frame.dc,52,12,L"SAKURA / TOP",12);}
+ GdiFlush();writeSample(writer.Get(),video,frame.pixels,w*h*4,timestamp,10000000/fps);lastVideo=timestamp;
  if(sound){LONGLONG target=(timestamp+10000000/fps)*48000/10000000;int frames=(int)std::min<LONGLONG>(target-audioFrames,48000);if(frames>0){std::vector<float> mix((size_t)frames*2,0);if(synthetic){for(int i=0;i<frames;i++){float s=(float)(0.15*sin(2*3.141592653589793*440*(audioFrames+i)/48000));mix[i*2]=mix[i*2+1]=s;}}else{float gain=audio==L"both"?0.5f:1.f;system.mix(mix,gain);microphone.mix(mix,gain);}std::vector<int16_t> pcm(mix.size());for(size_t i=0;i<mix.size();i++)pcm[i]=(int16_t)(std::clamp(mix[i],-1.f,1.f)*32767.f);writeSample(writer.Get(),audioStream,(BYTE*)pcm.data(),(DWORD)pcm.size()*2,audioFrames*10000000/48000,(LONGLONG)frames*10000000/48000);audioFrames+=frames;}}
  count++;if(synthetic&&count>=90)break;
  next+=std::chrono::nanoseconds(1000000000/fps);if(next<Clock::now())next=Clock::now();if(!synthetic)std::this_thread::sleep_until(next);
@@ -67,10 +69,16 @@ int record(const std::wstring& path,int x,int y,int width,int height,int fps,int
  std::cout<<"SAVED"<<std::endl;return 0;
 }
 int inspect(const std::wstring& path){
- ComPtr<IMFSourceReader> reader;check(MFCreateSourceReaderFromURL(path.c_str(),nullptr,&reader),"Read test MP4");
- int videos=0,audios=0;LONGLONG lastVideo=-1,lastAudio=-1;
- for(;;){DWORD index=0,flags=0;LONGLONG time=0;ComPtr<IMFSample> sample;check(reader->ReadSample(MF_SOURCE_READER_ANY_STREAM,0,&index,&flags,&time,&sample),"Read encoded test sample");if(flags&MF_SOURCE_READERF_ENDOFSTREAM)break;if(!sample)continue;
- ComPtr<IMFMediaType> type;check(reader->GetCurrentMediaType(index,&type),"Read test media type");GUID major{};check(type->GetGUID(MF_MT_MAJOR_TYPE,&major),"Read stream type");if(major==MFMediaType_Video){if(time<lastVideo)throw std::runtime_error("Video timestamps regress");lastVideo=time;videos++;}if(major==MFMediaType_Audio){if(time<lastAudio)throw std::runtime_error("Audio timestamps regress");lastAudio=time;audios++;}}
- if(videos<80||audios<10)throw std::runtime_error("Self-test missing video or audio samples");if(std::llabs(lastVideo-lastAudio)>5000000)throw std::runtime_error("Self-test A/V duration mismatch");
- std::cout<<"SELFTEST_OK video_samples="<<videos<<" audio_samples="<<audios<<std::endl;return 0;
+ int counts[2]={0,0};LONGLONG ends[2]={0,0};
+ for(int stream=0;stream<2;stream++){
+ ComPtr<IMFAttributes> attributes;check(MFCreateAttributes(&attributes,1),"Create reader attributes");check(attributes->SetUINT32(MF_SOURCE_READER_ENABLE_VIDEO_PROCESSING,TRUE),"Enable color conversion");
+ ComPtr<IMFSourceReader> reader;check(MFCreateSourceReaderFromURL(path.c_str(),attributes.Get(),&reader),"Read test MP4");
+ DWORD index=stream==0?MF_SOURCE_READER_FIRST_VIDEO_STREAM:MF_SOURCE_READER_FIRST_AUDIO_STREAM;
+ ComPtr<IMFMediaType> decoded;check(MFCreateMediaType(&decoded),"Create decoded media type");check(decoded->SetGUID(MF_MT_MAJOR_TYPE,stream==0?MFMediaType_Video:MFMediaType_Audio),"Set decoded major type");check(decoded->SetGUID(MF_MT_SUBTYPE,stream==0?MFVideoFormat_RGB32:MFAudioFormat_PCM),"Set decoded format");check(reader->SetCurrentMediaType(index,nullptr,decoded.Get()),"Configure actual media decoding");
+ LONGLONG last=-1;
+ for(;;){DWORD flags=0;LONGLONG time=0;ComPtr<IMFSample> sample;check(reader->ReadSample(index,0,nullptr,&flags,&time,&sample),"Decode test sample");if(flags&MF_SOURCE_READERF_ENDOFSTREAM)break;if(!sample)continue;if(time<last)throw std::runtime_error("Decoded timestamps regress");last=time;DWORD length=0;check(sample->GetTotalLength(&length),"Read decoded sample length");if(!length)throw std::runtime_error("Decoded sample is empty");counts[stream]++;}
+ ends[stream]=last;
+ }
+ if(counts[0]<80||counts[1]<10)throw std::runtime_error("Self-test missing decoded video or audio");if(std::llabs(ends[0]-ends[1])>5000000)throw std::runtime_error("Self-test A/V duration mismatch");
+ std::cout<<"SELFTEST_OK decoded_video="<<counts[0]<<" decoded_audio="<<counts[1]<<std::endl;return 0;
 }

@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -35,11 +36,14 @@ func enginePath() (string, error) {
 	return p, nil
 }
 func runEngine(args ...string) (string, error) {
+	return runEngineContext(context.Background(), args...)
+}
+func runEngineContext(ctx context.Context, args ...string) (string, error) {
 	p, e := enginePath()
 	if e != nil {
 		return "", e
 	}
-	c := exec.Command(p, args...)
+	c := exec.CommandContext(ctx, p, args...)
 	prepareCommand(c)
 	var errout bytes.Buffer
 	c.Stderr = &errout
