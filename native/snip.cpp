@@ -44,7 +44,8 @@ struct Editor {
     RECT originalSelection{};
     POINT dragOrigin{};
     std::wstring hexInput;
-    RECT widthTrack{};
+    RECT widthTrack{}, uiVisible{};
+    double uiScale = 1.0;
     std::wstring notice;
     std::vector<Mark> marks;
     std::vector<EditState> undo, redo;
@@ -86,22 +87,35 @@ struct Editor {
         p.y = std::clamp<LONG>(p.y, 0, h);
         return p;
     }
+    POINT uiPoint(POINT p) { return {(LONG)std::lround(p.x/uiScale),(LONG)std::lround(p.y/uiScale)}; }
     RECT toolbar() {
         RECT visible{0, 0, w, h};
         if (!fakeCapture) {
             POINT center{(selection.left + selection.right) / 2 + x,
                          (selection.top + selection.bottom) / 2 + y};
+            if (!selected) { POINT cursor{}; if(GetCursorPos(&cursor)) center=cursor; }
+            HMONITOR monitor=MonitorFromPoint(center,MONITOR_DEFAULTTONEAREST);
             MONITORINFO info{sizeof(info)};
-            if (GetMonitorInfoW(MonitorFromPoint(center, MONITOR_DEFAULTTONEAREST), &info)) {
+            if (GetMonitorInfoW(monitor, &info)) {
                 visible = info.rcMonitor;
                 OffsetRect(&visible, -x, -y);
+                using GetMonitorDpi=HRESULT(WINAPI*)(HMONITOR,int,UINT*,UINT*);
+                static HMODULE shcore=LoadLibraryW(L"shcore.dll");
+                static auto getDpi=shcore ? (GetMonitorDpi)GetProcAddress(shcore,"GetDpiForMonitor") : nullptr;
+                UINT dx=96,dy=96;
+                if(getDpi && SUCCEEDED(getDpi(monitor,0,&dx,&dy))) uiScale=dx/96.0;
+                else uiScale=GetDpiForWindow(window)/96.0;
+                if(uiScale<1) uiScale=1;
             }
         }
-        int width = std::min((int)(visible.right - visible.left) - 12, 864);
-        int left = std::clamp<int>(selection.left, visible.left + 6, visible.right - width - 6);
-        int top = selection.bottom + 10;
+        visible={(LONG)std::lround(visible.left/uiScale),(LONG)std::lround(visible.top/uiScale),(LONG)std::lround(visible.right/uiScale),(LONG)std::lround(visible.bottom/uiScale)};
+        uiVisible=visible;
+        RECT crop{(LONG)std::lround(selection.left/uiScale),(LONG)std::lround(selection.top/uiScale),(LONG)std::lround(selection.right/uiScale),(LONG)std::lround(selection.bottom/uiScale)};
+        int width = std::max(100,std::min((int)(visible.right - visible.left) - 12, 864));
+        int left = std::clamp<int>(crop.left, visible.left + 6, std::max<LONG>(visible.left+6,visible.right-width-6));
+        int top = crop.bottom + 10;
         if (top + 124 > visible.bottom)
-            top = selection.top - 132;
+            top = crop.top - 132;
         top =
             std::clamp<int>(top, visible.top + 6, std::max(visible.top + 6, visible.bottom - 128));
         return {left, top, left + width, top + 122};
@@ -320,9 +334,9 @@ struct Editor {
     }
     RECT palette() {
         RECT bar=toolbar(); int top=bar.top-228;
-        if(top<6) top=bar.bottom+8;
-        top=std::clamp(top,6,std::max(6,h-226));
-        int left=std::clamp<int>(bar.left+12,6,std::max(6,w-332));
+        if(top<uiVisible.top+6) top=bar.bottom+8;
+        top=std::clamp<int>(top,uiVisible.top+6,std::max<LONG>(uiVisible.top+6,uiVisible.bottom-226));
+        int left=std::clamp<int>(bar.left+12,uiVisible.left+6,std::max<LONG>(uiVisible.left+6,uiVisible.right-332));
         return {left,top,left+326,top+220};
     }
     RECT hexRect() { RECT r=palette(); return {r.left+14,r.top+166,r.left+205,r.top+202}; }
@@ -370,8 +384,9 @@ struct Editor {
         chooseColor(RGB(r,g,b),false);
     }
     void drawLoupe(HDC dc) {
-        int left=std::clamp<int>(pointer.x+24,4,std::max(4,w-142));
-        int top=std::clamp<int>(pointer.y+24,4,std::max(4,h-160));
+        POINT location=uiPoint(pointer);
+        int left=std::clamp<int>(location.x+24,uiVisible.left+4,std::max<LONG>(uiVisible.left+4,uiVisible.right-142));
+        int top=std::clamp<int>(location.y+24,uiVisible.top+4,std::max<LONG>(uiVisible.top+4,uiVisible.bottom-160));
         RECT box{left,top,left+134,top+152}; rounded(dc,box,RGB(32,38,43),12);
         int sx=std::clamp<int>(pointer.x-4,0,std::max(0,w-9)),sy=std::clamp<int>(pointer.y-4,0,std::max(0,h-9));
         SetStretchBltMode(dc,COLORONCOLOR); StretchBlt(dc,left+13,top+10,108,108,shot.dc,sx,sy,9,9,SRCCOPY);
@@ -464,11 +479,15 @@ struct Editor {
                 }
             }
         }
+        RECT bar=toolbar();
+        int uiDC=SaveDC(buffer.dc);
+        SetGraphicsMode(buffer.dc,GM_ADVANCED);
+        XFORM scale{(FLOAT)uiScale,0,0,(FLOAT)uiScale,0,0}; SetWorldTransform(buffer.dc,&scale);
+        POINT pointerUI=uiPoint(pointer);
         HGDIOBJ oldFont = SelectObject(buffer.dc, font);
         SetBkMode(buffer.dc, TRANSPARENT);
         SetTextColor(buffer.dc, RGB(255, 255, 255));
         if (selected && !selectOnly) {
-            RECT bar = toolbar();
             RECT shadow = bar;
             OffsetRect(&shadow, 0, 3);
             rounded(buffer.dc, shadow, RGB(15, 18, 22), 18);
@@ -483,7 +502,7 @@ struct Editor {
                 buttons.push_back({names[i],r,action});
                 bool active = (action==40 && tool==Tool::Select) || (action<7 && (int)tool==action+1) || (action==41 && tool==Tool::Line) || (action==42 && tool==Tool::Highlight);
                 bool enabled = !(action==7 && undo.empty()) && !(action==8 && redo.empty());
-                if (active || action==10 || (enabled && PtInRect(&r,pointer)))
+                if (active || action==10 || (enabled && PtInRect(&r,pointerUI)))
                     rounded(buffer.dc,r,active || action==10 ? RGB(197,87,107) : RGB(57,67,74));
                 SetTextColor(buffer.dc,enabled ? RGB(250,245,241) : RGB(111,121,128));
                 DrawTextW(buffer.dc,names[i].c_str(),-1,&r,DT_CENTER|DT_VCENTER|DT_SINGLELINE);
@@ -520,7 +539,7 @@ struct Editor {
                     ? L"拖动移动 · 角点缩放 / 端点调整 · Delete 删除 · Ctrl+D 复制 · 双击文字编辑"
                     : L"V 选择 · R 矩形 A 箭头 P 画笔 M 马赛克 T 文字 · G 拾色 · 滚轮调粗细";
             for (const auto& button : buttons) {
-                if (!PtInRect(&button.rect, pointer))
+                if (!PtInRect(&button.rect, pointerUI))
                     continue;
                 if (button.action == 7)
                     hint = L"撤销上一步 · Ctrl+Z";
@@ -545,7 +564,7 @@ struct Editor {
             DrawTextW(buffer.dc, hint.c_str(), -1, &help,
                       DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
         } else {
-            RECT r{20, 20, std::min(w - 20, 880), 65};
+            RECT r{uiVisible.left+20, uiVisible.top+20, std::min<LONG>(uiVisible.right-20,uiVisible.left+880), uiVisible.top+65};
             HBRUSH dark = CreateSolidBrush(RGB(35, 35, 41));
             FillRect(buffer.dc, &r, dark);
             DeleteObject(dark);
@@ -558,6 +577,7 @@ struct Editor {
         if (paletteOpen) drawPalette(buffer.dc);
         if (picking) drawLoupe(buffer.dc);
         SelectObject(buffer.dc, oldFont);
+        RestoreDC(buffer.dc,uiDC);
     }
     void paint() {
         PAINTSTRUCT ps;
@@ -653,6 +673,7 @@ struct Editor {
         undo.push_back({marks,selection}); selection=redo.back().selection; marks=std::move(redo.back().marks); redo.pop_back(); activeMark=-1;
     }
     int buttonAt(POINT p) {
+        p=uiPoint(p);
         for (const auto& button : buttons)
             if (PtInRect(&button.rect, p))
                 return button.action;
@@ -671,8 +692,8 @@ struct Editor {
         }
         case WM_MOUSEMOVE:
             pointer=p;
-            if(sliderDragging) { thickness=sliderValue(p,widthTrack,tool==Tool::Text ? 8 : 1,64); updateStyle(false); refresh(); return 0; }
-            if(channelDragging>=0) { updateChannel(p); refresh(); return 0; }
+            if(sliderDragging) { thickness=sliderValue(uiPoint(p),widthTrack,tool==Tool::Text ? 8 : 1,64); updateStyle(false); refresh(); return 0; }
+            if(channelDragging>=0) { updateChannel(uiPoint(p)); refresh(); return 0; }
             if(picking) { refresh(); return 0; }
             if(transform && (p.x!=dragOrigin.x || p.y!=dragOrigin.y)) {
                 p.x=std::clamp<LONG>(p.x,0,w-1); p.y=std::clamp<LONG>(p.y,0,h-1);
@@ -720,10 +741,10 @@ struct Editor {
         case WM_LBUTTONDOWN:
             pointer=p;
             if(picking) { chooseColor(GetPixel(shot.dc,std::min(p.x,w-1),std::min(p.y,h-1))); picking=false; refresh(); return 0; }
-            if(paletteOpen) { paletteClick(p); refresh(); return 0; }
+            if(paletteOpen) { paletteClick(uiPoint(p)); refresh(); return 0; }
             if(selected) {
                 int action=buttonAt(p);
-                if(action==60) { endText(); checkpoint(); sliderDragging=true; SetCapture(window); thickness=sliderValue(p,widthTrack,tool==Tool::Text ? 8 : 1,64); updateStyle(false); refresh(); return 0; }
+                if(action==60) { endText(); checkpoint(); sliderDragging=true; SetCapture(window); thickness=sliderValue(uiPoint(p),widthTrack,tool==Tool::Text ? 8 : 1,64); updateStyle(false); refresh(); return 0; }
                 if(action>=0) { clickAction(action); refresh(); return 0; }
                 endText();
                 if(tool==Tool::Select) {

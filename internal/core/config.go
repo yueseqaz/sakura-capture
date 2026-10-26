@@ -1,6 +1,7 @@
 package core
 
 import (
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -115,7 +116,13 @@ func (c Config) Output(ext string) (string, error) {
 	if e := os.MkdirAll(c.Directory, 0700); e != nil {
 		return "", e
 	}
-	return filepath.Join(c.Directory, "Sakura-"+time.Now().Format("20060102-150405.000000000")+ext), nil
+	// Windows wall-clock resolution can repeat even with nanosecond formatting.
+	// Add randomness without reserving empty files on cancelled captures.
+	var suffix [6]byte
+	if _, err := rand.Read(suffix[:]); err != nil {
+		return "", fmt.Errorf("生成文件名失败: %w", err)
+	}
+	return filepath.Join(c.Directory, fmt.Sprintf("Sakura-%s-%x%s", time.Now().Format("20060102-150405"), suffix, ext)), nil
 }
 func (c Config) AudioMode() string {
 	switch c.Audio {
