@@ -2,8 +2,8 @@
 1 ICON "icon.ico"
 1 RT_MANIFEST "app.manifest"
 1 VERSIONINFO
-FILEVERSION 0,1,0,0
-PRODUCTVERSION 0,1,0,0
+FILEVERSION 0,2,1,0
+PRODUCTVERSION 0,2,1,0
 FILEFLAGSMASK 0x3fL
 FILEFLAGS 0x0L
 FILEOS VOS_NT_WINDOWS32
@@ -16,12 +16,12 @@ BEGIN
     BEGIN
       VALUE "CompanyName", "yueseqaz\0"
       VALUE "FileDescription", "Sakura Capture - Screenshot and Screen Recorder\0"
-      VALUE "FileVersion", "0.1.0\0"
+      VALUE "FileVersion", "0.2.1\0"
       VALUE "InternalName", "SakuraCapture\0"
       VALUE "LegalCopyright", "Copyright (c) 2026 yueseqaz. MIT License.\0"
       VALUE "OriginalFilename", "SakuraCapture.exe\0"
       VALUE "ProductName", "Sakura Capture\0"
-      VALUE "ProductVersion", "0.1.0\0"
+      VALUE "ProductVersion", "0.2.1\0"
     END
   END
   BLOCK "VarFileInfo"

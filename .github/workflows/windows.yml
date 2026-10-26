@@ -65,7 +65,13 @@ jobs:
           $version = if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME } else { 'build-' + $env:GITHUB_SHA.Substring(0,7) }
           go build -trimpath -ldflags "-s -w -H=windowsgui -X main.version=$version" -o dist/SakuraCapture.exe .
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          if ($env:GITHUB_REF_TYPE -eq 'tag') {
+            $fileVersion = (Get-Item dist/SakuraCapture.exe).VersionInfo.FileVersion
+            if ($fileVersion -ne $version.TrimStart('v')) { throw "Resource version $fileVersion does not match $version" }
+          }
           Copy-Item README.md, LICENSE, THIRD_PARTY_NOTICES.md -Destination dist
+          New-Item -ItemType Directory -Path dist/assets | Out-Null
+          Copy-Item assets/screenshot.png, assets/recording-dock.png -Destination dist/assets
           Copy-Item docs/USER_GUIDE.zh-CN.md -Destination dist/使用说明.md
           ./scripts/collect-licenses.ps1
           Get-ChildItem dist/*.exe | ForEach-Object { '{0}: {1:N2} MB' -f $_.Name, ($_.Length / 1MB) }
