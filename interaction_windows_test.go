@@ -381,7 +381,11 @@ func TestWindowsScreenshotInteraction(t *testing.T) {
 			t.Fatal("native text field missing; IME/caret editing cannot work")
 		}
 		text, _ := syscall.UTF16PtrFromString("原生文字")
-		user32.NewProc("SetWindowTextW").Call(input, uintptr(unsafe.Pointer(text)))
+		interactionMessage(input, 0xC, 0, uintptr(unsafe.Pointer(text))) // WM_SETTEXT is marshalled across processes.
+		length, _, _ := user32.NewProc("SendMessageW").Call(input, 0xE, 0, 0)
+		if length != 4 {
+			t.Fatalf("native input text was not delivered: length=%d", length)
+		}
 		interactionKey(input, 13)
 		interactionKey(w, 'V')
 		interactionMessage(w, 0x203, 1, interactionPoint(155, 155))
@@ -390,7 +394,7 @@ func TestWindowsScreenshotInteraction(t *testing.T) {
 			t.Fatal("double-click did not reopen native text editor")
 		}
 		text, _ = syscall.UTF16PtrFromString("重新编辑成功")
-		user32.NewProc("SetWindowTextW").Call(input, uintptr(unsafe.Pointer(text)))
+		interactionMessage(input, 0xC, 0, uintptr(unsafe.Pointer(text)))
 		interactionKey(input, 13)
 		interactionKey(w, 13)
 		select {
@@ -524,6 +528,7 @@ func interactionCapturePixel(t *testing.T, x, y int) uint32 {
 
 func TestWindowsRecordingDockInteraction(t *testing.T) {
 	dist := interactionDist(t)
+	user32.NewProc("SetCursorPos").Call(20, 20)
 	root := t.TempDir()
 	s := core.Defaults()
 	s.Config.Directory = root
@@ -585,6 +590,21 @@ func TestWindowsRecordingDockInteraction(t *testing.T) {
 	eventuallyInteraction(t, "actual resume acknowledgement", p, func() bool { return strings.Contains(p.log.text(), "capture engine: RESUMED") })
 	a.paused = false
 	time.Sleep(500 * time.Millisecond)
+	interactionClickLabel(t, dock, a.controlView, "收纳")
+	eventuallyInteraction(t, "recording side tab", p, func() bool {
+		user32.NewProc("GetWindowRect").Call(dock, uintptr(unsafe.Pointer(&bounds)))
+		return bounds.Right-bounds.Left < 100
+	})
+	interactionWhiteWindow(t, bounds)
+	time.Sleep(300 * time.Millisecond)
+	if pixel := interactionCapturePixel(t, int(bounds.Left)+20, int(bounds.Top)+20); pixel != 0xffffff {
+		t.Fatalf("collapsed recording tab appears in capture: %06x", pixel)
+	}
+	interactionClickLabel(t, dock, (&application{dockCollapsed: true, recording: true}).dockView, "● REC")
+	eventuallyInteraction(t, "recording tab expands to controls", p, func() bool {
+		user32.NewProc("GetWindowRect").Call(dock, uintptr(unsafe.Pointer(&bounds)))
+		return bounds.Right-bounds.Left > 400
+	})
 	interactionClickLabel(t, dock, a.controlView, "停止并保存")
 	eventuallyInteraction(t, "recording saved and persistent dock restored", p, func() bool {
 		return strings.Contains(p.log.text(), "capture engine: SAVED") && interactionWindow(cmd.Process.Pid, "", dockTitle) == originalDock
@@ -604,6 +624,8 @@ func TestWindowsRecordingDockInteraction(t *testing.T) {
 	eventuallyInteraction(t, "screenshot directly from restored dock", p, func() bool { return findInteractionOverlay(&overlay) })
 	interactionKey(overlay, 27)
 	eventuallyInteraction(t, "dock returns after screenshot cancellation", p, func() bool { return interactionWindow(cmd.Process.Pid, "", dockTitle) == originalDock })
+	time.Sleep(500 * time.Millisecond)
+	user32.NewProc("SetCursorPos").Call(20, 20)
 	// Exercise real native resizing, not only a headless collapsed view.
 	interactionClickLabel(t, dock, a.dockView, "收纳")
 	eventuallyInteraction(t, "collapsed side tab", p, func() bool {

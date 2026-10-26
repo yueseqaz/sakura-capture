@@ -218,6 +218,6 @@ func (a *application) dockView(c *ui.Context) {
 		if text == "" {
 			text = "截图 " + a.store.Config.ShotKey + "   /   录屏 " + a.store.Config.RecordKey
 		}
-		ui.Text(c, text).FillWidth().FontSize(11).TextColor(ui.Hex("#aab5bc"))
+		ui.Text(c, text).FillWidth().MaxLines(1).Ellipsis("…").FontSize(11).TextColor(ui.Hex("#aab5bc")).Tooltip(text)
 	})
 }

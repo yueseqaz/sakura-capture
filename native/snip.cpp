@@ -1365,6 +1365,18 @@ struct Editor {
             }
             return 0;
         case WM_KEYDOWN:
+            if (wp != VK_SHIFT && wp != VK_CONTROL && wp != VK_MENU &&
+                (dragging || transform || sliderDragging || channelDragging >= 0)) {
+                bool commitDrawing = dragging && selected && tool != Tool::Select &&
+                                     tool != Tool::Text && wp != VK_ESCAPE;
+                dragging = false;
+                transform = 0;
+                sliderDragging = false;
+                channelDragging = -1;
+                ReleaseCapture();
+                if (commitDrawing)
+                    commitMark(current);
+            }
             if (wp == VK_ESCAPE) {
                 if (paletteOpen || picking) {
                     paletteOpen = false;
@@ -1646,6 +1658,33 @@ void imageSelfTest(const std::wstring& path) {
     editor.undoMark();
     if (!EqualRect(&editor.selection, &originalCrop))
         throw std::runtime_error("Crop geometry undo failed");
+    // Use a calm, deterministic document fixture for UI previews. Pixel export
+    // tests above still use the coordinate-coded capture to detect corruption.
+    editor.rounded(editor.shot.dc, {0, 0, 1120, 720}, RGB(232, 235, 239), 0);
+    editor.rounded(editor.shot.dc, {45, 30, 1075, 680}, RGB(255, 253, 250), 18);
+    editor.rounded(editor.shot.dc, {45, 30, 1075, 82}, RGB(32, 38, 43), 12);
+    auto label = [&](RECT area, const wchar_t* text, int size, COLORREF color, bool bold = false) {
+        HFONT f = CreateFontW(-size, 0, 0, 0, bold ? FW_SEMIBOLD : FW_NORMAL, FALSE, FALSE, FALSE,
+                              DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
+        auto previous = SelectObject(editor.shot.dc, f);
+        SetBkMode(editor.shot.dc, TRANSPARENT);
+        SetTextColor(editor.shot.dc, color);
+        DrawTextW(editor.shot.dc, text, -1, &area, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        SelectObject(editor.shot.dc, previous);
+        DeleteObject(f);
+    };
+    label({72, 38, 500, 72}, L"SAKURA  /  PROJECT NOTES", 17, RGB(246, 235, 230), true);
+    label({794, 38, 1045, 72}, L"LOCAL WORKSPACE", 13, RGB(171, 185, 194));
+    label({195, 95, 700, 128}, L"A clearer way to share.", 26, RGB(32, 38, 43), true);
+    editor.rounded(editor.shot.dc, {180, 148, 580, 252}, RGB(244, 239, 234), 12);
+    label({205, 157, 555, 192}, L"Release checklist", 19, RGB(67, 73, 79), true);
+    label({205, 199, 555, 234}, L"Capture. Annotate. Share the important part.", 16,
+          RGB(119, 122, 128));
+    label({648, 157, 950, 190}, L"Small details matter", 20, RGB(67, 73, 79), true);
+    label({648, 198, 970, 231}, L"Precise controls, less visual noise.", 16, RGB(119, 122, 128));
+    editor.rounded(editor.shot.dc, {180, 290, 940, 292}, RGB(230, 225, 221), 0);
+    label({195, 384, 945, 425}, L"Keep the context. Make your point. Save it locally.", 18,
+          RGB(119, 122, 128));
     editor.transform = 0;
     editor.activeMark = -1;
     editor.selected = true;
@@ -1653,7 +1692,10 @@ void imageSelfTest(const std::wstring& path) {
     editor.marks = {{Tool::Rectangle, {{160, 130}, {600, 270}}, L"", RGB(236, 74, 92), 3},
                     {Tool::Arrow, {{780, 340}, {600, 240}}, L"", RGB(236, 74, 92), 6},
                     {Tool::Number, {{150, 115}}, L"1", RGB(236, 74, 92), 3},
-                    {Tool::Text, {{220, 320}}, L"捕捉灵感，随手标注。", RGB(255, 255, 255), 28}};
+                    {Tool::Text, {{220, 320}}, L"捕捉灵感，随手标注。", RGB(197, 87, 107), 28}};
+    editor.thickness = 3;
+    editor.colors[15] = RGB(236, 74, 92);
+    editor.colorIndex = 15;
     editor.compose();
     savePNG(editor.preview, path + L".editor.png");
     editor.paletteOpen = true;
