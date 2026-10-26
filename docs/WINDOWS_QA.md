@@ -19,3 +19,13 @@ A green CI build is not interactive desktop certification. Complete this checkli
 - [ ] Verify partial-file and finalization errors are understandable; never claim crash recovery.
 - [ ] Measure combined binary/zip size and idle resource use; record hardware and OS build.
 - [ ] Check unsigned binary warnings without recommending disabling Windows security.
+
+## v0.2.0 新增验收
+
+- 拖动悬浮控制台，不遮挡其他窗口操作；Windows 10/11 分别确认控制台不会出现在录制画面内。
+- 以无声音开始，依次开启电脑声音、麦克风、两者、全部关闭；逐段回放确认真正有声/静音。
+- 暂停时开关声音，再继续，确认暂停段未写入文件、没有旧音频回放。
+- 分别在录制中和暂停中停止，确认 MP4 可播放；无麦克风权限或无默认设备时仍能保存画面。
+- 拔出音频设备，确认只关闭该声音来源；连接后重试开启。
+- 新增椭圆、自动序号、颜色/粗细选择、Shift 约束与 Ctrl+Z/Y 导出像素正确。
+- 在 640 DIP 窗口宽度及 125%/150% 显示缩放下检查主界面和标注工具栏。

@@ -47,6 +47,9 @@ jobs:
         run: |
           go test -run TestPreview .
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Test live recording controls and endpoint failure handling
+        shell: pwsh
+        run: ./scripts/test-controls.ps1
       - name: Embed application icon and DPI manifest
         shell: cmd
         run: |
@@ -86,6 +89,7 @@ jobs:
           name: media-selftest
           path: |
             ${{ runner.temp }}/sakura-selftest.mp4*
+            ${{ runner.temp }}/sakura-controls-*.mp4
             ${{ runner.temp }}/sakura-ui/*.png
   release:
     if: startsWith(github.ref, 'refs/tags/v')

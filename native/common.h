@@ -23,6 +23,7 @@
 #include <future>
 #include <iostream>
 #include <mutex>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <thread>

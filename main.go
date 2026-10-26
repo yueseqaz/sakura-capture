@@ -31,6 +31,9 @@ type application struct {
 	rec                                         *engine
 	started                                     time.Time
 	elapsed                                     int
+	systemAudio, micAudio                       bool
+	systemPending, micPending                   bool
+	audioNotice                                 string
 	registered                                  []string
 	cancelPreparation                           context.CancelFunc
 }
@@ -263,7 +266,14 @@ func (a *application) record(mode string) {
 				a.control.Destroy()
 				a.control = nil
 			}
+			a.systemAudio, a.micAudio = false, false
+			a.systemPending, a.micPending = true, true
+			a.audioNotice = ""
 			en, e := startEngine(args, func(event string) {
+				if strings.HasPrefix(event, "AUDIO") {
+					a.dispatch(func() { a.audioEvent(event) })
+					return
+				}
 				if event == "READY" {
 					a.dispatch(func() {
 						if a.rec == nil || a.stopping {
@@ -368,27 +378,12 @@ func (a *application) showControl() {
 		a.control.Destroy()
 		a.control = nil
 	}
-	a.control = mygo.NewWindow(mygo.WindowOptions{Title: "Sakura · 录制中", Width: 380, Height: 130, Hidden: true, AlwaysOnTop: true, DisableResize: true, DisableMaximize: true, Content: ui.View(func(c *ui.Context) {
-		ui.Column(c).Fill().Padding(14).Gap(10).Children(func() {
-			label := "● 正在录制"
-			if a.paused {
-				label = "Ⅱ 已暂停"
-			}
-			if a.stopping {
-				label = "正在保存…"
-			}
-			ui.Text(c, fmt.Sprintf("%s  %02d:%02d", label, a.elapsed/60, a.elapsed%60)).Bold()
-			ui.Row(c).Gap(8).Children(func() {
-				p := "暂停"
-				if a.paused {
-					p = "继续"
-				}
-				ui.Button(c, p).Disabled(a.stopping).OnClick(a.pause)
-				ui.PrimaryButton(c, "停止并保存").Disabled(a.stopping).OnClick(a.stop)
-				ui.Text(c, a.store.Config.StopKey).FontSize(11)
-			})
-		})
-	})})
+	a.control = mygo.NewWindow(mygo.WindowOptions{
+		Title: "Sakura · 录制控制台", Width: 520, Height: 200, UseContentSize: true,
+		Hidden: true, AlwaysOnTop: true, SkipTaskbar: true, DisableResize: true,
+		DisableMaximize: true, TitleBarStyle: mygo.TitleBarHidden, HideWindowButtons: true,
+		BackgroundColor: "#20262b", Content: ui.View(a.controlView),
+	})
 	a.control.OnClose(func(e *mygo.CloseEvent) { e.PreventDefault(); a.stop() })
 	// Apply exclusion before showing the control, avoiding a captured first frame.
 	excludeWindow(a.control.NativeHandle())
@@ -420,24 +415,27 @@ func (a *application) showCountdown() {
 	a.control.OnClose(func(e *mygo.CloseEvent) { e.PreventDefault(); a.stop() })
 }
 func section(c *ui.Context, title, detail string, body func()) {
-	ui.Column(c).FillWidth().Padding(20).Gap(12).Radius(12).Background(ui.RGB(255, 255, 255)).Children(func() {
+	ui.Column(c).FillWidth().Padding(22).Gap(12).Radius(16).Border(1, line).Background(ui.Hex("#fffdfb")).Children(func() {
 		ui.Text(c, title).FontSize(18).Bold()
 		if detail != "" {
-			ui.Text(c, detail).FontSize(12).TextColor(ui.RGB(105, 110, 120))
+			ui.Text(c, detail).FontSize(12).TextColor(muted)
 		}
 		body()
 	})
 }
 func (a *application) view(c *ui.Context) {
-	ui.Column(c).Fill().Background(ui.RGB(245, 244, 240)).Children(func() {
-		ui.Column(c).FillWidth().Padding(26, 28, 18, 28).Gap(6).Children(func() {
-			ui.Text(c, "SAKURA / CAPTURE").FontSize(12).Bold().TextColor(ui.RGB(166, 70, 85))
-			ui.Row(c).Gap(12).Children(func() {
-				ui.Text(c, "把这一刻，留下来。").FontSize(28).Bold()
-				ui.Text(c, version).FontSize(11).TextColor(ui.RGB(120, 120, 120))
+	c.SetTheme(sakuraTheme(false))
+	ui.Column(c).Fill().Background(ui.Hex("#f6f3ef")).Children(func() {
+		ui.Column(c).FillWidth().Padding(24, 28, 18, 28).Gap(14).Children(func() {
+			ui.Row(c).FillWidth().AlignItems(ui.Center).Gap(10).Children(func() {
+				ui.Column(c).Size(36, 36).Radius(11).Background(rose).AlignItems(ui.Center).Justify(ui.Center).Children(func() {
+					ui.Icon(c, shotIcon).Size(22, 22).TextColor(ui.Hex("#ffffff"))
+				})
+				ui.Text(c, "SAKURA").Font("Bahnschrift").FontSize(20).Bold()
+				ui.Text(c, "CAPTURE STUDIO").Grow(1).FontSize(10).TextColor(muted)
+				ui.Text(c, version).FontSize(11).TextColor(muted)
 			})
-			ui.Text(c, "原生桌面 · 本地保存 · 无需登录").FontSize(12).TextColor(ui.RGB(100, 105, 115))
-			ui.Segmented(c, &a.tab, "捕捉", "最近文件", "设置")
+			ui.Segmented(c, &a.tab, "捕捉", "最近文件", "设置").FillWidth()
 		})
 		ui.Scroll(c).Grow(1).FillWidth().Children(func() {
 			ui.Column(c).FillWidth().Padding(0, 28, 20, 28).Gap(14).Children(func() {
@@ -451,41 +449,66 @@ func (a *application) view(c *ui.Context) {
 				}
 			})
 		})
-		ui.Row(c).FillWidth().Padding(12, 28).Children(func() { ui.Text(c, a.status).Grow(1).MinWidth(0).FontSize(12).TextColor(ui.RGB(105, 95, 100)) })
+		ui.Row(c).FillWidth().Padding(12, 28).BorderWidth(1, 0, 0, 0).BorderColor(line).Gap(8).Children(func() {
+			ui.Text(c, "●").FontSize(10).TextColor(rose)
+			ui.Text(c, a.status).Grow(1).MinWidth(0).FontSize(12).TextColor(muted)
+		})
 	})
 }
 func (a *application) captureView(c *ui.Context) {
 	disabled := a.busy || a.rec != nil
-	section(c, "截图", "框选、标注、复制，一气呵成。", func() {
-		ui.Row(c).Gap(10).Children(func() {
-			ui.PrimaryButton(c, "区域截图").Disabled(disabled).OnClick(func() { a.screenshot("region") })
-			ui.Button(c, "屏幕截图").Disabled(disabled).OnClick(func() { a.screenshot("screen") })
-			ui.Button(c, "窗口截图").Disabled(disabled).OnClick(func() { a.screenshot("window") })
+	ui.Row(c).FillWidth().Padding(20, 22).Radius(16).Gradient(ui.Hex("#efe1dd"), ui.Hex("#f9eee5"), 20).Gap(16).AlignItems(ui.Center).Children(func() {
+		ui.Column(c).Grow(1).Gap(6).Children(func() {
+			ui.Text(c, "把这一刻，留下来。").FontSize(26).Bold()
+			ui.Text(c, "原生桌面 · 本地保存 · 无需登录").FontSize(12).TextColor(ui.Hex("#896b6b"))
 		})
-		ui.Text(c, "快捷键  "+a.store.Config.ShotKey+"    /    Esc 取消").FontSize(12)
+		ui.Column(c).Gap(4).AlignItems(ui.End).Children(func() {
+			ui.Text(c, "轻一点，快一点。").FontSize(12).Bold().TextColor(rose)
+			ui.Text(c, "PNG / MP4").Font("Consolas").FontSize(11).TextColor(ui.Hex("#896b6b"))
+		})
 	})
-	section(c, "录屏", "记录操作，也记录你的讲解。", func() {
-		ui.Row(c).Gap(12).Children(func() {
-			ui.Text(c, "声音")
-			ui.Select(c, &a.store.Config.Audio, []string{"无声音", "系统声音", "麦克风", "系统 + 麦克风"}).Width(190)
-			ui.Text(c, "帧率")
-			ui.Select(c, &a.store.Config.FPS, []string{"15", "30", "60"}).Width(85)
+	section(c, "01  /  截图", "框选画面，随手标注。保存的同时复制到剪贴板。", func() {
+		ui.Row(c).Gap(10).Wrap().Children(func() {
+			actionButton(c, "区域截图", shotIcon, true).Disabled(disabled).OnClick(func() { a.screenshot("region") })
+			ui.Button(c, "屏幕截图").Height(38).Disabled(disabled).OnClick(func() { a.screenshot("screen") })
+			ui.Button(c, "窗口截图").Height(38).Disabled(disabled).OnClick(func() { a.screenshot("window") })
 		})
-		ui.Row(c).Gap(12).Children(func() {
-			ui.Text(c, "画质")
-			ui.Select(c, &a.store.Config.Quality, []string{"节省空间 · 3 Mbps", "标准 · 6 Mbps", "清晰 · 12 Mbps"}).Width(190)
-			ui.Checkbox(c, &a.store.Config.Cursor, "录入鼠标")
-		})
-		ui.Row(c).Gap(10).Children(func() {
-			ui.PrimaryButton(c, "区域录屏").Disabled(disabled).OnClick(func() { a.record("region") })
-			ui.Button(c, "屏幕录屏").Disabled(disabled).OnClick(func() { a.record("screen") })
-			ui.Button(c, "窗口区域录屏").Disabled(disabled).OnClick(func() { a.record("window") })
-		})
-		ui.Text(c, "开始  "+a.store.Config.RecordKey+"    /    停止  "+a.store.Config.StopKey).FontSize(12)
+		ui.Text(c, "矩形 / 箭头 / 画笔 / 马赛克 / 文字   ·   "+a.store.Config.ShotKey).FontSize(11).TextColor(muted)
 	})
-	section(c, "保存在你的电脑", "不会上传截图和录屏。关闭主窗口后仍可通过托盘使用。", func() {
-		ui.Text(c, a.store.Config.Directory).FontSize(12)
-		ui.Button(c, "打开保存文件夹").OnClick(func() {
+	section(c, "02  /  录屏", "记录操作，也记录讲解。悬浮控制台随时暂停和切换声音。", func() {
+		ui.Row(c).Gap(12).Wrap().Children(func() {
+			ui.Text(c, "声音").TextColor(muted)
+			ui.Select(c, &a.store.Config.Audio, []string{"无声音", "系统声音", "麦克风", "系统 + 麦克风"}).Width(186).Disabled(disabled)
+			ui.Text(c, "帧率").TextColor(muted)
+			ui.Select(c, &a.store.Config.FPS, []string{"15", "30", "60"}).Width(80).Disabled(disabled)
+		})
+		ui.Row(c).Gap(12).Wrap().Children(func() {
+			ui.Text(c, "画质").TextColor(muted)
+			ui.Select(c, &a.store.Config.Quality, []string{"节省空间 · 3 Mbps", "标准 · 6 Mbps", "清晰 · 12 Mbps"}).Width(186).Disabled(disabled)
+			ui.Checkbox(c, &a.store.Config.Cursor, "录入鼠标").Disabled(disabled)
+		})
+		ui.Row(c).Gap(10).Wrap().Children(func() {
+			actionButton(c, "区域录屏", videoIcon, true).Disabled(disabled).OnClick(func() { a.record("region") })
+			ui.Button(c, "屏幕录屏").Height(38).Disabled(disabled).OnClick(func() { a.record("screen") })
+			ui.Button(c, "窗口区域录屏").Height(38).Disabled(disabled).OnClick(func() { a.record("window") })
+		})
+		ui.Text(c, "开始  "+a.store.Config.RecordKey+"    /    停止  "+a.store.Config.StopKey).FontSize(11).TextColor(muted)
+		if a.recording {
+			ui.Button(c, "显示录制控制台").OnClick(func() {
+				if a.control != nil {
+					a.control.Show()
+					a.control.Focus()
+				}
+			})
+		}
+	})
+	ui.Row(c).FillWidth().Padding(15, 18).Gap(12).AlignItems(ui.Center).Radius(12).Border(1, line).Children(func() {
+		ui.Icon(c, folderIcon).Size(22, 22).TextColor(rose)
+		ui.Column(c).Grow(1).MinWidth(0).Gap(4).Children(func() {
+			ui.Text(c, "只在你的电脑里").FontSize(12).Bold()
+			ui.Text(c, a.store.Config.Directory).FillWidth().FontSize(11).TextColor(muted)
+		})
+		ui.Button(c, "打开文件夹").OnClick(func() {
 			if e := os.MkdirAll(a.store.Config.Directory, 0700); e != nil {
 				a.fail(e)
 				return
@@ -505,7 +528,7 @@ func (a *application) historyView(c *ui.Context) {
 	})
 	for i, it := range a.store.History {
 		it := it
-		ui.Column(c.Key(strconv.Itoa(i))).FillWidth().Padding(14).Gap(6).Radius(10).Background(ui.RGB(255, 255, 255)).Children(func() {
+		ui.Column(c.Key(strconv.Itoa(i))).FillWidth().Padding(14).Gap(6).Radius(10).Background(ui.Hex("#fffdfb")).Children(func() {
 			ui.Text(c, filepath.Base(it.Path)).Bold()
 			ui.Text(c, it.Kind+" · "+it.Created.Format("2006-01-02 15:04")).FontSize(11)
 			ui.Row(c).Gap(8).Children(func() {

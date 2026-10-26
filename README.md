@@ -20,11 +20,12 @@ Tagged versions create a **draft** GitHub Release for manual verification before
 ## Included
 
 - Region, monitor and visible-window-region screenshots, saved as PNG and copied to the clipboard.
-- Screenshot rectangles, arrows, freehand drawing, text, destructive mosaic, five colors, three widths and undo/redo.
+- Screenshot rectangles, ellipses, arrows, freehand drawing, text, numbered steps and destructive mosaic; visible color/width palettes, tool hints and undo/redo.
 - Region, monitor and visible-window-region recording to H.264 / AAC MP4.
 - Default system audio (WASAPI loopback), default microphone, mixed audio, or silent recording.
 - 15 / 30 / 60 FPS, bitrate presets, mouse cursor capture, optional countdown, pause/resume and graceful stop.
-- Native MyGo interface, tray, configurable global shortcuts, local history and persistent settings.
+- Redesigned native MyGo workspace and draggable always-on-top recording dock with pause/resume, live speaker/microphone toggles and stop/save.
+- Tray, configurable global shortcuts, local history and persistent settings.
 - Windows-native engine built with the static MSVC runtime; no additional browser or .NET runtime.
 
 See [measured build verification](docs/BUILD_VERIFICATION.md) for what was actually tested and what still requires real hardware.
@@ -35,7 +36,7 @@ See [measured build verification](docs/BUILD_VERIFICATION.md) for what was actua
 - Windows N/KN requires Media Feature Pack. Microphone recording needs Windows microphone permission and a default input device. System audio needs a default render endpoint.
 - Capture uses **GDI screen capture**, not Windows Graphics Capture. Window mode records a fixed visible rectangle: it does not track window movement or capture hidden/minimized content.
 - Monitor recording supports one monitor per capture. A manually selected region can span monitors; media dimensions are limited to 7680x4320 and rounded down to even pixels for H.264.
-- Audio endpoints are chosen when recording starts; changing devices during recording is not seamless. Device errors stop recording with a message.
+- Audio sources can be enabled/disabled during recording, including while paused. Disabling releases the capture endpoint. Enabling reopens the current Windows default device; switching devices is not seamless. Endpoint failures mute only that source and show a warning; video and the other source continue. Initially silent sessions retain an empty AAC track to support live enabling.
 - Pause/resume is supported. Locked desktops, UAC secure desktop, protected video, exclusive fullscreen and some hardware overlays are not supported capture targets.
 - MP4 is finalized on normal stop. Forced termination, power loss or storage failure may leave an unplayable file. Recovery is not guaranteed.
 - Capture-control exclusion uses Windows display affinity; its behavior still needs validation on target Windows machines and display drivers.

@@ -32,4 +32,21 @@ func TestPreview(t *testing.T) {
 			t.Fatal(e)
 		}
 	}
+	for _, paused := range []bool{false, true} {
+		a := &application{store: core.Defaults(), recording: true, paused: paused, elapsed: 83, systemAudio: true}
+		tt := ui.NewTester(a.controlView, 520, 200)
+		name := "recording"
+		if paused {
+			name = "paused"
+		}
+		f, err := os.Create(filepath.Join(dir, name+".png"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = png.Encode(f, tt.Image())
+		f.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
 }

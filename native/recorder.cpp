@@ -2,16 +2,21 @@
 
 namespace {
 std::atomic<bool> stopped{false}, paused{false};
+std::mutex commandMutex;
+std::deque<std::string> commands;
 using Clock = std::chrono::steady_clock;
 struct Audio {
-    bool loopback;
+    bool loopback, synthetic;
+    LONGLONG syntheticFrames = 0;
     std::atomic<bool> running{true};
     std::thread worker;
     std::mutex mutex;
     std::deque<float> queue;
     std::string error;
-    Audio(bool loop) : loopback(loop) {}
+    Audio(bool loop, bool fake = false) : loopback(loop), synthetic(fake) {}
     void start() {
+        if (synthetic)
+            return;
         std::promise<void> ready;
         auto initialized = ready.get_future();
         worker = std::thread([this, p = std::move(ready)]() mutable {
@@ -85,7 +90,7 @@ struct Audio {
                 else {
                     std::lock_guard<std::mutex> lock(mutex);
                     error = e.what();
-                    stopped = true;
+                    running = false;
                 }
             }
             if (SUCCEEDED(co))
@@ -94,6 +99,14 @@ struct Audio {
         initialized.get();
     }
     void mix(std::vector<float>& output, float gain) {
+        if (synthetic) {
+            for (size_t i = 0; i < output.size() / 2; i++) {
+                float tone = (float)(0.15 * sin(2 * 3.141592653589793 * (loopback ? 440 : 660) *
+                                                syntheticFrames++ / 48000));
+                output[i * 2 + (loopback ? 0 : 1)] += tone * gain;
+            }
+            return;
+        }
         std::lock_guard<std::mutex> lock(mutex);
         for (size_t i = 0; i < output.size() && !queue.empty(); i++) {
             output[i] += queue.front() * gain;
@@ -148,7 +161,8 @@ int record(const std::wstring& path, int x, int y, int width, int height, int fp
         (fps != 15 && fps != 30 && fps != 60) || bitrate < 100000 || bitrate > 50000000)
         throw std::runtime_error("Invalid dimensions, frame rate or bitrate (maximum 7680x4320)");
     int w = width & ~1, h = height & ~1;
-    bool sound = synthetic || audio != L"none";
+    // Keep an AAC track even when initially muted so sources can be enabled live.
+    bool sound = true;
     stopped = false;
     paused = false;
     ComPtr<IMFAttributes> attributes;
@@ -186,21 +200,41 @@ int record(const std::wstring& path, int x, int y, int width, int height, int fp
         check(pcm->SetUINT32(MF_MT_AUDIO_AVG_BYTES_PER_SECOND, 192000), "Set PCM bandwidth");
         check(writer->SetInputMediaType(audioStream, pcm.Get(), nullptr), "Configure AAC encoder");
     }
-    Audio system(true), microphone(false);
-    if (!synthetic) {
-        if (audio == L"system" || audio == L"both")
-            system.start();
-        if (audio == L"mic" || audio == L"both")
-            microphone.start();
-    }
+    std::unique_ptr<Audio> system, microphone;
+    auto setAudio = [&](const std::string& source, bool enable) {
+        auto& endpoint = source == "system" ? system : microphone;
+        try {
+            if (enable && !endpoint) {
+                auto nextAudio = std::make_unique<Audio>(source == "system", synthetic);
+                nextAudio->start();
+                nextAudio->clear();
+                endpoint = std::move(nextAudio);
+            } else if (!enable) {
+                // Releasing the endpoint stops actual capture, not just its mix gain.
+                endpoint.reset();
+            }
+            std::cout << "AUDIO " << source << (endpoint ? " on" : " off") << std::endl;
+        } catch (const std::exception& e) {
+            endpoint.reset();
+            std::cout << "AUDIO_ERROR " << source << " " << e.what() << std::endl;
+        }
+    };
     // The sink writer consumes positive-stride RGB32 as top-down scanlines.
     check(writer->BeginWriting(), "Start MP4 writer");
     Bitmap frame(w, h, true);
-    if (!synthetic)
+    if (!synthetic) {
+        setAudio("system", audio == L"system" || audio == L"both");
+        setAudio("mic", audio == L"mic" || audio == L"both");
         DwmFlush();
-    // Discard samples captured while the encoder and frame storage initialized.
-    system.clear();
-    microphone.clear();
+    }
+    if (system)
+        system->clear();
+    if (microphone)
+        microphone->clear();
+    {
+        std::lock_guard<std::mutex> lock(commandMutex);
+        commands.clear();
+    }
     if (!synthetic)
         std::thread([]() {
             std::string line;
@@ -213,6 +247,11 @@ int record(const std::wstring& path, int x, int y, int width, int height, int fp
                     paused = true;
                 if (line == "resume")
                     paused = false;
+                if (line.rfind("audio ", 0) == 0) {
+                    std::lock_guard<std::mutex> lock(commandMutex);
+                    if (commands.size() < 32)
+                        commands.push_back(line);
+                }
             }
             stopped = true;
         }).detach();
@@ -222,21 +261,72 @@ int record(const std::wstring& path, int x, int y, int width, int height, int fp
     std::cout << "READY" << std::endl;
     auto start = Clock::now(), next = start;
     Clock::duration pauseDuration{};
+    Clock::time_point pauseStart{};
+    bool wasPaused = false;
     LONGLONG audioFrames = 0, lastVideo = -1;
     int count = 0;
     HRESULT finalResult = S_OK;
     try {
         while (!stopped) {
+            std::deque<std::string> pending;
+            // Exercise the same live-source transitions using deterministic test endpoints.
+            if (synthetic) {
+                if (count == 15)
+                    pending.push_back("audio system on");
+                if (count == 30)
+                    pending.push_back("audio mic on");
+                if (count == 45)
+                    pending.push_back("audio system off");
+                if (count == 60)
+                    pending.push_back("audio mic off");
+                if (count == 75)
+                    pending.push_back("audio system on");
+            }
+            {
+                std::lock_guard<std::mutex> lock(commandMutex);
+                pending.insert(pending.end(), commands.begin(), commands.end());
+                commands.clear();
+            }
+            for (const auto& command : pending) {
+                if (command == "audio system on")
+                    setAudio("system", true);
+                if (command == "audio system off")
+                    setAudio("system", false);
+                if (command == "audio mic on")
+                    setAudio("mic", true);
+                if (command == "audio mic off")
+                    setAudio("mic", false);
+            }
+            for (auto source : {"system", "mic"}) {
+                auto& endpoint = std::string(source) == "system" ? system : microphone;
+                if (endpoint && !endpoint->running) {
+                    std::string error;
+                    {
+                        std::lock_guard<std::mutex> lock(endpoint->mutex);
+                        error = endpoint->error;
+                    }
+                    endpoint.reset();
+                    std::cout << "AUDIO_ERROR " << source << " " << error << std::endl;
+                }
+            }
             if (paused) {
-                auto p = Clock::now();
-                while (paused && !stopped)
-                    std::this_thread::sleep_for(std::chrono::milliseconds(10));
-                system.clear();
-                microphone.clear();
-                pauseDuration += Clock::now() - p;
+                if (!wasPaused) {
+                    pauseStart = Clock::now();
+                    wasPaused = true;
+                    std::cout << "PAUSED" << std::endl;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                continue;
+            }
+            if (wasPaused) {
+                if (system)
+                    system->clear();
+                if (microphone)
+                    microphone->clear();
+                pauseDuration += Clock::now() - pauseStart;
                 next = Clock::now();
-                if (stopped)
-                    break;
+                wasPaused = false;
+                std::cout << "RESUMED" << std::endl;
             }
             auto now = Clock::now();
             LONGLONG timestamp = synthetic ? (LONGLONG)count * 10000000 / fps
@@ -289,17 +379,11 @@ int record(const std::wstring& path, int x, int y, int width, int height, int fp
                 int frames = (int)std::min<LONGLONG>(target - audioFrames, 48000);
                 if (frames > 0) {
                     std::vector<float> mix((size_t)frames * 2, 0);
-                    if (synthetic) {
-                        for (int i = 0; i < frames; i++) {
-                            float s = (float)(0.15 * sin(2 * 3.141592653589793 * 440 *
-                                                         (audioFrames + i) / 48000));
-                            mix[i * 2] = mix[i * 2 + 1] = s;
-                        }
-                    } else {
-                        float gain = audio == L"both" ? 0.5f : 1.f;
-                        system.mix(mix, gain);
-                        microphone.mix(mix, gain);
-                    }
+                    float gain = system && microphone ? 0.5f : 1.f;
+                    if (system)
+                        system->mix(mix, gain);
+                    if (microphone)
+                        microphone->mix(mix, gain);
                     std::vector<int16_t> pcm(mix.size());
                     for (size_t i = 0; i < mix.size(); i++)
                         pcm[i] = (int16_t)(std::clamp(mix[i], -1.f, 1.f) * 32767.f);
@@ -327,22 +411,14 @@ int record(const std::wstring& path, int x, int y, int width, int height, int fp
         SetThreadExecutionState(ES_CONTINUOUS);
         throw;
     }
-    {
-        std::lock_guard<std::mutex> lock(system.mutex);
-        if (!system.error.empty())
-            throw std::runtime_error(system.error + "; partial recording was finalized");
-    }
-    {
-        std::lock_guard<std::mutex> lock(microphone.mutex);
-        if (!microphone.error.empty())
-            throw std::runtime_error(microphone.error + "; partial recording was finalized");
-    }
     std::cout << "SAVED" << std::endl;
     return 0;
 }
 int inspect(const std::wstring& path) {
     int counts[2] = {0, 0};
     LONGLONG ends[2] = {0, 0};
+    double energy[6][2]{};
+    int energyFrames[6]{};
     for (int stream = 0; stream < 2; stream++) {
         ComPtr<IMFAttributes> attributes;
         check(MFCreateAttributes(&attributes, 1), "Create reader attributes");
@@ -381,6 +457,27 @@ int inspect(const std::wstring& path) {
             check(sample->GetTotalLength(&length), "Read decoded sample length");
             if (!length)
                 throw std::runtime_error("Decoded sample is empty");
+            if (stream == 1) {
+                ComPtr<IMFMediaBuffer> buffer;
+                check(sample->ConvertToContiguousBuffer(&buffer), "Read decoded audio");
+                BYTE* data = nullptr;
+                DWORD bytes = 0;
+                check(buffer->Lock(&data, nullptr, &bytes), "Lock decoded audio");
+                auto pcm = reinterpret_cast<const int16_t*>(data);
+                for (DWORD frame = 0; frame < bytes / 4; frame++) {
+                    LONGLONG at = time + (LONGLONG)frame * 10000000 / 48000;
+                    int bin = (int)(at / 5000000);
+                    LONGLONG inside = at % 5000000;
+                    if (bin < 0 || bin >= 6 || inside < 1200000 || inside > 3800000)
+                        continue;
+                    for (int channel = 0; channel < 2; channel++) {
+                        double value = pcm[frame * 2 + channel] / 32768.0;
+                        energy[bin][channel] += value * value;
+                    }
+                    energyFrames[bin]++;
+                }
+                buffer->Unlock();
+            }
             counts[stream]++;
         }
         ends[stream] = last;
@@ -389,6 +486,18 @@ int inspect(const std::wstring& path) {
         throw std::runtime_error("Self-test missing decoded video or audio");
     if (std::llabs(ends[0] - ends[1]) > 5000000)
         throw std::runtime_error("Self-test A/V duration mismatch");
+    const bool audible[6][2] = {{false, false}, {true, false},  {true, true},
+                                {false, true},  {false, false}, {true, false}};
+    for (int bin = 0; bin < 6; bin++) {
+        if (!energyFrames[bin])
+            throw std::runtime_error("Missing audio transition test samples");
+        for (int channel = 0; channel < 2; channel++) {
+            double rms = sqrt(energy[bin][channel] / energyFrames[bin]);
+            if ((audible[bin][channel] && rms < 0.02) || (!audible[bin][channel] && rms > 0.005))
+                throw std::runtime_error("Decoded audio mute/unmute transition failed");
+        }
+    }
+    std::cout << "AUDIO_TRANSITIONS_OK silent/system/both/mic/silent/system" << std::endl;
     std::cout << "SELFTEST_OK decoded_video=" << counts[0] << " decoded_audio=" << counts[1]
               << std::endl;
     return 0;
