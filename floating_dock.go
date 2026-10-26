@@ -17,6 +17,7 @@ func (a *application) ensureDock() {
 	}
 	a.control = mygo.NewWindow(mygo.WindowOptions{
 		Title: dockTitle, Width: 520, Height: 156, UseContentSize: true,
+		// Override the native caption's default minimum width for the 44-DIP tab.
 		MinWidth: 1, MinHeight: 1,
 		Hidden: true, AlwaysOnTop: true, SkipTaskbar: true, DisableResize: true,
 		DisableMaximize: true, TitleBarStyle: mygo.TitleBarHidden, HideWindowButtons: true,
@@ -78,7 +79,7 @@ func (a *application) restoreDock() {
 	if a.control == nil {
 		return
 	}
-	a.dockCollapsed, a.dockPinned = false, false
+	a.dockCollapsed = false
 	a.dockOutside = time.Now()
 	a.sizeDock(520, 156)
 	a.control.ShowInactive()

@@ -415,6 +415,9 @@ struct Editor {
         if (recentColors.size() > 6)
             recentColors.resize(6);
     }
+    Tool propertyTool() const {
+        return activeMark >= 0 && activeMark < (int)marks.size() ? marks[activeMark].tool : tool;
+    }
     int sliderValue(POINT p, RECT r, int low, int high) {
         return low + (std::clamp<int>(p.x - r.left - 8, 0, r.right - r.left - 16) * (high - low) +
                       (r.right - r.left - 16) / 2) /
@@ -735,12 +738,12 @@ struct Editor {
             SetTextColor(buffer.dc, RGB(220, 229, 232));
             DrawTextW(buffer.dc, L"拾色", -1, &pick, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
             RECT widthLabel{bar.left + 180, cy - 14, bar.left + 230, cy + 14};
-            const wchar_t* parameter = tool == Tool::Text     ? L"字号"
-                                       : tool == Tool::Mosaic ? L"块大小"
-                                                              : L"粗细";
+            const wchar_t* parameter = propertyTool() == Tool::Text     ? L"字号"
+                                       : propertyTool() == Tool::Mosaic ? L"块大小"
+                                                                        : L"粗细";
             DrawTextW(buffer.dc, parameter, -1, &widthLabel, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
             widthTrack = {bar.left + 242, cy - 14, bar.left + 392, cy + 14};
-            drawSlider(buffer.dc, widthTrack, thickness, tool == Tool::Text ? 8 : 1, 64,
+            drawSlider(buffer.dc, widthTrack, thickness, propertyTool() == Tool::Text ? 8 : 1, 64,
                        RGB(224, 124, 141));
             buttons.push_back({L"滑块", widthTrack, 60});
             RECT value{bar.left + 402, cy - 14, bar.left + 455, cy + 14};
@@ -1094,7 +1097,8 @@ struct Editor {
         case WM_MOUSEMOVE:
             pointer = p;
             if (sliderDragging) {
-                thickness = sliderValue(uiPoint(p), widthTrack, tool == Tool::Text ? 8 : 1, 64);
+                thickness =
+                    sliderValue(uiPoint(p), widthTrack, propertyTool() == Tool::Text ? 8 : 1, 64);
                 updateStyle(false);
                 refresh();
                 return 0;
@@ -1202,7 +1206,8 @@ struct Editor {
                     checkpoint();
                     sliderDragging = true;
                     SetCapture(window);
-                    thickness = sliderValue(uiPoint(p), widthTrack, tool == Tool::Text ? 8 : 1, 64);
+                    thickness = sliderValue(uiPoint(p), widthTrack,
+                                            propertyTool() == Tool::Text ? 8 : 1, 64);
                     updateStyle(false);
                     refresh();
                     return 0;
@@ -1325,7 +1330,7 @@ struct Editor {
         case WM_MOUSEWHEEL:
             if (selected && !textEditing && !paletteOpen) {
                 thickness = std::clamp(thickness + (GET_WHEEL_DELTA_WPARAM(wp) > 0 ? 1 : -1),
-                                       tool == Tool::Text ? 8 : 1, 64);
+                                       propertyTool() == Tool::Text ? 8 : 1, 64);
                 updateStyle();
                 refresh();
             }
