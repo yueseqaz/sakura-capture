@@ -258,6 +258,12 @@ func TestWindowsScreenshotInteraction(t *testing.T) {
 
 func interactionClickLabel(t *testing.T, w uintptr, view func(*ui.Context), text string) {
 	t.Helper()
+	class, _ := syscall.UTF16PtrFromString("MyGoSurface")
+	surface, _, _ := user32.NewProc("FindWindowExW").Call(w, 0, uintptr(unsafe.Pointer(class)), 0)
+	if surface == 0 {
+		t.Fatal("native MyGo content surface missing")
+	}
+	w = surface
 	var r winRect
 	user32.NewProc("GetClientRect").Call(w, uintptr(unsafe.Pointer(&r)))
 	dpi, _, _ := user32.NewProc("GetDpiForWindow").Call(w)
