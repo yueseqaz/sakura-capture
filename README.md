@@ -6,6 +6,8 @@ A small, offline Windows screenshot and screen-recording application. Native Go 
 
 ![Native capture interface](assets/screenshot.png)
 
+![Floating recording dock](assets/recording-dock.png)
+
 ## Download
 
 Published packages are available on [GitHub Releases](https://github.com/yueseqaz/sakura-capture/releases). For development builds:
