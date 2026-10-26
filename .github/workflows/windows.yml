@@ -1,0 +1,84 @@
+name: Windows Build
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - name: Test Go and native views
+        shell: pwsh
+        run: |
+          go test -race ./...
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          go vet ./...
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Build native Windows engine
+        shell: cmd
+        run: |
+          mkdir dist
+          cl /nologo /std:c++17 /EHsc /utf-8 /W4 /O2 /MT /DUNICODE /D_UNICODE native\main.cpp native\recorder.cpp native\snip.cpp /Fe:dist\sakura-engine.exe /link mfplat.lib mfreadwrite.lib mfuuid.lib ole32.lib uuid.lib user32.lib gdi32.lib windowscodecs.lib dwmapi.lib msimg32.lib
+      - name: Test real H.264 and AAC encoding and decoding
+        shell: pwsh
+        run: |
+          & ./dist/sakura-engine.exe selftest "$env:RUNNER_TEMP/sakura-selftest.mp4"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Build native Go application
+        shell: pwsh
+        env:
+          CGO_ENABLED: '0'
+        run: |
+          $version = if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME } else { 'build-' + $env:GITHUB_SHA.Substring(0,7) }
+          go build -trimpath -ldflags "-s -w -H=windowsgui -X main.version=$version" -o dist/SakuraCapture.exe .
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          Copy-Item README.md, LICENSE, THIRD_PARTY_NOTICES.md -Destination dist
+          Copy-Item docs/USER_GUIDE.zh-CN.md -Destination dist/使用说明.md
+          ./scripts/collect-licenses.ps1
+          Get-ChildItem dist/*.exe | ForEach-Object { '{0}: {1:N2} MB' -f $_.Name, ($_.Length / 1MB) }
+          Compress-Archive -Path dist/* -DestinationPath SakuraCapture-windows-x64.zip
+          $hash = (Get-FileHash SakuraCapture-windows-x64.zip -Algorithm SHA256).Hash.ToLower()
+          "$hash  SakuraCapture-windows-x64.zip" | Out-File -Encoding ascii SHA256SUMS.txt
+          "## Windows portable build`n`nDownload the **SakuraCapture-windows-x64** artifact below. Extract it completely and run **SakuraCapture.exe**. Both executables must remain together.`n`nSHA-256: ``$hash``" >> $env:GITHUB_STEP_SUMMARY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SakuraCapture-windows-x64
+          path: |
+            SakuraCapture-windows-x64.zip
+            SHA256SUMS.txt
+          retention-days: 30
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: media-selftest
+          path: ${{ runner.temp }}/sakura-selftest.mp4
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: SakuraCapture-windows-x64
+      - uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          generate_release_notes: true
+          files: |
+            SakuraCapture-windows-x64.zip
+            SHA256SUMS.txt

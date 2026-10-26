@@ -1,0 +1,10 @@
+/dist/
+/build/
+*.exe
+*.obj
+*.pdb
+*.ilk
+*.mp4
+*.png
+!assets/*.png
+.DS_Store
