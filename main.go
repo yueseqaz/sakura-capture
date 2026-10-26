@@ -75,6 +75,12 @@ func (a *application) save() {
 func (a *application) ready() {
 	a.win = mygo.NewWindow(mygo.WindowOptions{Title: "Sakura Capture", Width: 760, Height: 800, MinWidth: 640, MinHeight: 620, Content: ui.View(a.view)})
 	a.win.OnClose(func(e *mygo.CloseEvent) {
+		if !a.quitting && (a.busy || a.rec != nil) && a.tray == nil {
+			e.PreventDefault()
+			a.status = "系统托盘不可用，请先结束截图或录制再关闭。"
+			a.win.Invalidate()
+			return
+		}
 		if !a.quitting && a.tray != nil {
 			e.PreventDefault()
 			a.save()
@@ -122,7 +128,7 @@ func trayIcon() []byte {
 }
 func (a *application) show() { a.win.Show(); a.win.Focus(); a.win.Invalidate() }
 func (a *application) quit() {
-	if a.busy || a.rec != nil {
+	if a.quitting || a.busy || a.rec != nil {
 		a.status = "请先结束当前截图或录制。"
 		a.show()
 		return
@@ -150,7 +156,7 @@ func (a *application) bindKeys() {
 }
 func (a *application) fail(e error) { a.status = e.Error(); a.show() }
 func (a *application) screenshot(mode string) {
-	if a.busy || a.rec != nil {
+	if a.quitting || a.busy || a.rec != nil {
 		return
 	}
 	if _, e := enginePath(); e != nil {
@@ -189,7 +195,7 @@ func (a *application) screenshot(mode string) {
 	}()
 }
 func (a *application) record(mode string) {
-	if a.busy || a.rec != nil {
+	if a.quitting || a.busy || a.rec != nil {
 		return
 	}
 	if _, e := enginePath(); e != nil {

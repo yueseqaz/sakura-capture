@@ -100,6 +100,10 @@ struct Audio {
             queue.pop_front();
         }
     }
+    void clear() {
+        std::lock_guard<std::mutex> lock(mutex);
+        queue.clear();
+    }
     ~Audio() {
         running = false;
         if (worker.joinable())
@@ -193,6 +197,11 @@ int record(const std::wstring& path, int x, int y, int width, int height, int fp
     check(writer->BeginWriting(), "Start MP4 writer");
     Bitmap frame(w, h, true);
     if (!synthetic)
+        DwmFlush();
+    // Discard samples captured while the encoder and frame storage initialized.
+    system.clear();
+    microphone.clear();
+    if (!synthetic)
         std::thread([]() {
             std::string line;
             while (std::getline(std::cin, line)) {
@@ -222,6 +231,8 @@ int record(const std::wstring& path, int x, int y, int width, int height, int fp
                 auto p = Clock::now();
                 while (paused && !stopped)
                     std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                system.clear();
+                microphone.clear();
                 pauseDuration += Clock::now() - p;
                 next = Clock::now();
                 if (stopped)
@@ -340,8 +351,8 @@ int inspect(const std::wstring& path) {
         ComPtr<IMFSourceReader> reader;
         check(MFCreateSourceReaderFromURL(path.c_str(), attributes.Get(), &reader),
               "Read test MP4");
-        DWORD index =
-            stream == 0 ? MF_SOURCE_READER_FIRST_VIDEO_STREAM : MF_SOURCE_READER_FIRST_AUDIO_STREAM;
+        DWORD index = static_cast<DWORD>(stream == 0 ? MF_SOURCE_READER_FIRST_VIDEO_STREAM
+                                                     : MF_SOURCE_READER_FIRST_AUDIO_STREAM);
         ComPtr<IMFMediaType> decoded;
         check(MFCreateMediaType(&decoded), "Create decoded media type");
         check(

@@ -51,9 +51,7 @@ jobs:
         shell: cmd
         run: |
           cd assets
-          rc /nologo /fo app.res app.rc
-          if errorlevel 1 exit /b 1
-          cvtres /nologo /machine:x64 /out:..\rsrc_windows_amd64.syso app.res
+          windres --target=pe-x86-64 -i app.rc -o ..\rsrc_windows_amd64.syso -O coff
           if errorlevel 1 exit /b 1
           cd ..
       - name: Build native Go application

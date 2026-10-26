@@ -40,7 +40,7 @@ Tagged versions create a **draft** GitHub Release for manual verification before
 
 ## Development
 
-UI: Go 1.27.3+, MyGo v0.6.4 (pinned). Engine: Visual Studio 2022+ C++ tools and Windows SDK, C++17. Windows SDK libraries supply Media Foundation, WASAPI, GDI and WIC.
+UI: Go 1.27.3+, MyGo v0.6.4 (pinned). Engine: Visual Studio 2022+ C++ tools and Windows SDK, C++17; MinGW `windres` embeds the icon and application manifest. Windows SDK libraries supply Media Foundation, WASAPI, GDI and WIC.
 
 ```sh
 go test ./...
