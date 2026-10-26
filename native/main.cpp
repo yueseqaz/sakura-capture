@@ -64,14 +64,20 @@ void savePNG(Bitmap& image, const std::wstring& path) {
     check(encoder->CreateNewFrame(&frame, nullptr), "Create PNG frame");
     check(frame->Initialize(nullptr), "Initialize PNG frame");
     check(frame->SetSize(image.w, image.h), "Set PNG size");
-    WICPixelFormatGUID format = GUID_WICPixelFormat32bppBGR;
+    WICPixelFormatGUID format = GUID_WICPixelFormat24bppBGR;
     check(frame->SetPixelFormat(&format), "Set PNG format");
-    std::vector<BYTE> topDown((size_t)image.w * image.h * 4);
-    for (int y = 0; y < image.h; y++)
-        memcpy(topDown.data() + (size_t)y * image.w * 4,
-               image.pixels + (size_t)(image.topDown ? y : image.h - 1 - y) * image.w * 4,
-               (size_t)image.w * 4);
-    check(frame->WritePixels(image.h, image.w * 4, (UINT)topDown.size(), topDown.data()),
+    if (format != GUID_WICPixelFormat24bppBGR)
+        throw std::runtime_error("PNG encoder did not accept 24-bit BGR");
+    // WIC negotiates its pixel format; never pass 32-bit rows to a 24-bit encoder.
+    std::vector<BYTE> topDown((size_t)image.w * image.h * 3);
+    for (int y = 0; y < image.h; y++) {
+        const BYTE* source =
+            image.pixels + (size_t)(image.topDown ? y : image.h - 1 - y) * image.w * 4;
+        BYTE* target = topDown.data() + (size_t)y * image.w * 3;
+        for (int x = 0; x < image.w; x++)
+            memcpy(target + x * 3, source + x * 4, 3);
+    }
+    check(frame->WritePixels(image.h, image.w * 3, (UINT)topDown.size(), topDown.data()),
           "Write PNG pixels");
     check(frame->Commit(), "Commit PNG frame");
     check(encoder->Commit(), "Commit PNG");

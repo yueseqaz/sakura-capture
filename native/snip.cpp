@@ -556,7 +556,8 @@ void imageSelfTest(const std::wstring& path) {
     check(converter->CopyPixels(nullptr, 160 * 4, (UINT)pixels.size(), pixels.data()),
           "Read test PNG pixels");
     auto at = [&](int x, int y) { return pixels.data() + ((size_t)y * 160 + x) * 4; };
-    if (at(0, 0)[0] != 20 || at(0, 0)[1] != 16 || at(0, 0)[2] != 120)
+    if (at(0, 0)[0] != 20 || at(0, 0)[1] != 16 || at(0, 0)[2] != 120 || at(159, 95)[0] != 179 ||
+        at(159, 95)[1] != 111 || at(159, 95)[2] != 120)
         throw std::runtime_error("PNG crop or vertical orientation is incorrect");
     BYTE* mosaic = at(25, 29);
     if (mosaic[0] != 40 || mosaic[1] != 40)
