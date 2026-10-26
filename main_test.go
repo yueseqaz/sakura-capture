@@ -58,3 +58,14 @@ func TestNavigation(t *testing.T) {
 		t.Fatal("capture navigation failed")
 	}
 }
+
+func TestCaptureCompactWidth(t *testing.T) {
+	a := &application{store: core.Defaults()}
+	tt := ui.NewTester(a.view, 640, 620)
+	for _, text := range []string{"区域截图", "屏幕截图", "窗口截图", "区域录屏", "屏幕录屏", "窗口区域录屏"} {
+		r, ok := tt.Find(text)
+		if !ok || r.X < 0 || r.X+r.W > 640 {
+			t.Errorf("control %q overflows narrow window: %+v", text, r)
+		}
+	}
+}

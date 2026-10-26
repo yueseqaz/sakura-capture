@@ -14,6 +14,7 @@ func sakuraTheme(dark bool) *ui.Theme {
 	t.Background, t.Text, t.TextMuted = ui.Hex("#f6f3ef"), ink, muted
 	t.Surface, t.SurfaceHover, t.SurfacePressed = ui.Hex("#faf7f4"), ui.Hex("#f1e7e4"), ui.Hex("#e9d7d5")
 	t.Border, t.Radius, t.FontSize = line, 9, 13
+	t.Font = "Microsoft YaHei UI, Microsoft YaHei, PingFang SC, sans-serif"
 	t.Accent, t.AccentHover, t.AccentPressed = rose, ui.Hex("#ae465c"), ui.Hex("#92384a")
 	t.Focus, t.Selection = ui.RGBA(197, 87, 107, .5), ui.RGBA(197, 87, 107, .2)
 	if dark {

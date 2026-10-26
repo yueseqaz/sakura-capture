@@ -15,10 +15,11 @@ import (
 )
 
 type engine struct {
-	cmd   *exec.Cmd
-	input io.WriteCloser
-	mu    sync.Mutex
-	log   bytes.Buffer
+	cmd        *exec.Cmd
+	input      io.WriteCloser
+	mu         sync.Mutex
+	log        bytes.Buffer
+	eventsDone chan struct{}
 }
 
 func enginePath() (string, error) {
@@ -60,7 +61,7 @@ func startEngine(args []string, event func(string)) (*engine, error) {
 	}
 	c := exec.Command(p, args...)
 	prepareCommand(c)
-	en := &engine{cmd: c}
+	en := &engine{cmd: c, eventsDone: make(chan struct{})}
 	en.input, e = c.StdinPipe()
 	if e != nil {
 		return nil, e
@@ -74,6 +75,7 @@ func startEngine(args []string, event func(string)) (*engine, error) {
 		return nil, e
 	}
 	go func() {
+		defer close(en.eventsDone)
 		s := bufio.NewScanner(out)
 		for s.Scan() {
 			event(s.Text())
@@ -88,6 +90,10 @@ func (e *engine) send(s string) error {
 	return err
 }
 func (e *engine) wait() error {
+	// Drain events before Wait closes StdoutPipe, preserving final acknowledgements.
+	if e.eventsDone != nil {
+		<-e.eventsDone
+	}
 	err := e.cmd.Wait()
 	if err != nil {
 		return fmt.Errorf("%v\n%s", err, e.log.String())

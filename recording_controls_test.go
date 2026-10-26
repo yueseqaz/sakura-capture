@@ -73,6 +73,20 @@ func TestAudioCommandFailure(t *testing.T) {
 	}
 }
 
+func TestStopCommandCanRetry(t *testing.T) {
+	w := &controlInput{err: errors.New("closed pipe")}
+	a := &application{rec: &engine{input: w}, recording: true}
+	a.stop()
+	if a.stopping || a.audioNotice == "" {
+		t.Fatal("failed stop must remain retryable")
+	}
+	w.err = nil
+	a.stop()
+	if !a.stopping || w.String() != "stop\n" {
+		t.Fatal("stop retry failed")
+	}
+}
+
 func TestControlView(t *testing.T) {
 	w := &controlInput{}
 	a := &application{store: core.Defaults(), rec: &engine{input: w}, recording: true, elapsed: 3661}
@@ -80,6 +94,9 @@ func TestControlView(t *testing.T) {
 	for _, text := range []string{"01:01:01", "暂停", "停止并保存", "电脑声音", "麦克风"} {
 		if !tt.HasText(text) {
 			t.Errorf("missing control %q", text)
+		}
+		if r, ok := tt.Find(text); !ok || r.Y < 0 || r.Y+r.H > 200 || r.X+r.W > 520 {
+			t.Errorf("control %q outside compact dock: %+v", text, r)
 		}
 	}
 	if err := tt.Click("麦克风"); err != nil {

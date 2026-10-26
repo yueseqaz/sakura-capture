@@ -53,7 +53,7 @@ struct Editor {
             shot.capture(x, y);
         font = CreateFontW(-18, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
                            OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                           DEFAULT_PITCH, L"Segoe UI");
+                           DEFAULT_PITCH, L"Microsoft YaHei UI");
     }
     ~Editor() {
         if (font)
@@ -217,9 +217,9 @@ struct Editor {
             SelectObject(dc, oldBrush);
             DeleteObject(fill);
         } else if (mark.tool == Tool::Text) {
-            HFONT textFont =
-                CreateFontW(-24 - mark.width * 2, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
-                            DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
+            HFONT textFont = CreateFontW(-24 - mark.width * 2, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE,
+                                         FALSE, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY,
+                                         DEFAULT_PITCH, L"Microsoft YaHei UI");
             HGDIOBJ old = SelectObject(dc, textFont);
             TextOutW(dc, a.x, a.y, mark.text.c_str(), (int)mark.text.size());
             SelectObject(dc, old);
@@ -431,6 +431,12 @@ struct Editor {
             redo.pop_back();
         }
     }
+    int buttonAt(POINT p) {
+        for (const auto& button : buttons)
+            if (PtInRect(&button.rect, p))
+                return button.action;
+        return -1;
+    }
     LRESULT message(UINT msg, WPARAM wp, LPARAM lp) {
         POINT p = bound({GET_X_LPARAM(lp), GET_Y_LPARAM(lp)});
         switch (msg) {
@@ -439,7 +445,19 @@ struct Editor {
         case WM_PAINT:
             paint();
             return 0;
+        case WM_SETCURSOR: {
+            POINT screen{};
+            GetCursorPos(&screen);
+            ScreenToClient(window, &screen);
+            SetCursor(
+                LoadCursorW(nullptr, selected && buttonAt(screen) >= 0 ? IDC_HAND : IDC_CROSS));
+            return TRUE;
+        }
         case WM_MOUSEMOVE:
+            if (selected && !dragging && buttonAt(pointer) == buttonAt(p)) {
+                pointer = p;
+                return 0;
+            }
             pointer = p;
             if (!selected) {
                 if (mode == L"region" && dragging)

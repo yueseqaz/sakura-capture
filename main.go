@@ -352,12 +352,16 @@ func (a *application) stop() {
 	a.stopping = true
 	a.status = "正在封装 MP4，请勿退出…"
 	if e := a.rec.send("stop"); e != nil {
+		a.stopping = false
 		a.status = "停止请求失败: " + e.Error()
+		a.audioNotice = "停止请求发送失败，请重试。"
 	}
 	if a.control != nil {
 		a.control.Invalidate()
 	}
-	a.win.Invalidate()
+	if a.win != nil {
+		a.win.Invalidate()
+	}
 }
 func (a *application) pause() {
 	if a.rec == nil || !a.recording || a.stopping {
