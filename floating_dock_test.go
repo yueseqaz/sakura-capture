@@ -49,3 +49,16 @@ func TestFloatingDockViews(t *testing.T) {
 		t.Fatal("paused recording must remain identifiable", tt.Texts())
 	}
 }
+
+func TestRemoteRecordingWarning(t *testing.T) {
+	a := &application{store: core.Defaults(), recording: true}
+	a.store.Config.RemoteCompatible = true
+	tt := ui.NewTester(a.controlView, 520, 200)
+	if !tt.HasText("远程兼容 · 控制台可能入镜") {
+		t.Fatal("remote mode must not promise capture exclusion", tt.Texts())
+	}
+	r, ok := tt.Find("远程兼容 · 控制台可能入镜")
+	if !ok || r.X < 0 || r.X+r.W > 520 {
+		t.Fatalf("remote warning overflow: %+v", r)
+	}
+}

@@ -55,3 +55,10 @@ v0.2.2 adds actual HWND interaction tests on the hosted Windows desktop, includi
 - 连续录制、暂停、收纳、展开、声音切换与停止后解码回放；工具栏和侧签都没有入镜或留下黑块。
 
 自动化覆盖项以当次 CI 日志为准；以上清单不因构建成功而自动视为实机通过。
+## Cloud-PC / remote desktop regression (v0.3.1)
+
+- On a real cloud-PC client (including 3060), start the app and confirm the idle dock is visible rather than a black rectangle. Capture affinity must be NONE before recording and after normal stop, canceled preparation and startup failure.
+- In normal recording mode, verify local capture exclusion; document that the cloud stream may hide/black out the controls. GetWindowDisplayAffinity success alone does not certify cloud streaming compatibility.
+- Enable the explicit remote compatibility checkbox while idle and restart the app to verify persistence. Record a region: controls and the collapsed tab must remain remotely visible, with the warning that they can be recorded. Place them outside the selection to keep them out of the recording.
+- In full-monitor remote-compatible recording, verify the documented limitation rather than claiming the dock is excluded. The setting must be disabled during active recording/preparation.
+- Confirm screenshots still hide the dock before freezing the desktop and restore it without display affinity after cancel/save.

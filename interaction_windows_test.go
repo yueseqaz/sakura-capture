@@ -527,6 +527,16 @@ func interactionCapturePixel(t *testing.T, x, y int) uint32 {
 }
 
 func TestWindowsRecordingDockInteraction(t *testing.T) {
+	for _, remote := range []bool{false, true} {
+		name := "local-excluded"
+		if remote {
+			name = "remote-compatible"
+		}
+		t.Run(name, func(t *testing.T) { testWindowsRecordingDockInteraction(t, remote) })
+	}
+}
+
+func testWindowsRecordingDockInteraction(t *testing.T, remote bool) {
 	dist := interactionDist(t)
 	user32.NewProc("SetCursorPos").Call(20, 20)
 	root := t.TempDir()
@@ -535,6 +545,7 @@ func TestWindowsRecordingDockInteraction(t *testing.T) {
 	s.Config.Countdown = "0"
 	s.Config.Audio = "无声音"
 	s.Config.FPS = "15"
+	s.Config.RemoteCompatible = remote
 	if err := s.Save(filepath.Join(root, "SakuraCapture", "settings.json")); err != nil {
 		t.Fatal(err)
 	}
@@ -546,6 +557,11 @@ func TestWindowsRecordingDockInteraction(t *testing.T) {
 	var main, overlay, dock uintptr
 	eventuallyInteraction(t, "persistent startup dock", p, func() bool { dock = interactionWindow(cmd.Process.Pid, "", dockTitle); return dock != 0 })
 	originalDock := dock
+	var idleAffinity uint32
+	ok, _, _ := user32.NewProc("GetWindowDisplayAffinity").Call(dock, uintptr(unsafe.Pointer(&idleAffinity)))
+	if ok == 0 || idleAffinity != 0 {
+		t.Fatalf("startup dock must remain visible to remote capture: affinity=%x", idleAffinity)
+	}
 	// A second instance opens the secondary main window; startup itself stays compact.
 	second := exec.Command(filepath.Join(dist, "SakuraCapture.exe"))
 	prepareCommand(second)
@@ -568,9 +584,13 @@ func TestWindowsRecordingDockInteraction(t *testing.T) {
 	eventuallyInteraction(t, "encoder READY", p, func() bool { return strings.Contains(p.log.text(), "capture engine: READY") })
 	a.recording = true
 	var affinity uint32
-	ok, _, _ := user32.NewProc("GetWindowDisplayAffinity").Call(dock, uintptr(unsafe.Pointer(&affinity)))
-	if ok == 0 || affinity != 0x11 {
-		t.Fatalf("dock capture exclusion not confirmed: %x", affinity)
+	ok, _, _ = user32.NewProc("GetWindowDisplayAffinity").Call(dock, uintptr(unsafe.Pointer(&affinity)))
+	wantAffinity := uint32(0x11)
+	if remote {
+		wantAffinity = 0
+	}
+	if ok == 0 || affinity != wantAffinity {
+		t.Fatalf("dock capture policy: got %x, want %x", affinity, wantAffinity)
 	}
 	style, _, _ := user32.NewProc("GetWindowLongW").Call(dock, ^uintptr(19)) // GWL_EXSTYLE = -20
 	if style&8 == 0 {
@@ -580,7 +600,11 @@ func TestWindowsRecordingDockInteraction(t *testing.T) {
 	user32.NewProc("GetWindowRect").Call(dock, uintptr(unsafe.Pointer(&bounds)))
 	interactionWhiteWindow(t, bounds)
 	time.Sleep(500 * time.Millisecond)
-	if pixel := interactionCapturePixel(t, int(bounds.Left)+25, int(bounds.Top)+25); pixel != 0xffffff {
+	if pixel := interactionCapturePixel(t, int(bounds.Left)+25, int(bounds.Top)+25); remote {
+		if pixel == 0 || pixel == 0xffffff {
+			t.Fatalf("remote-compatible dock must be visible, not black or excluded: pixel=%06x", pixel)
+		}
+	} else if pixel != 0xffffff {
 		t.Fatalf("dock appears in recorder capture, pixel=%06x (expected white background)", pixel)
 	}
 	interactionClickLabel(t, dock, a.controlView, "暂停")
@@ -597,7 +621,11 @@ func TestWindowsRecordingDockInteraction(t *testing.T) {
 	})
 	interactionWhiteWindow(t, bounds)
 	time.Sleep(300 * time.Millisecond)
-	if pixel := interactionCapturePixel(t, int(bounds.Left)+20, int(bounds.Top)+20); pixel != 0xffffff {
+	if pixel := interactionCapturePixel(t, int(bounds.Left)+20, int(bounds.Top)+20); remote {
+		if pixel == 0 || pixel == 0xffffff {
+			t.Fatalf("remote-compatible tab must be visible, not black or excluded: pixel=%06x", pixel)
+		}
+	} else if pixel != 0xffffff {
 		t.Fatalf("collapsed recording tab appears in capture: %06x", pixel)
 	}
 	interactionClickLabel(t, dock, (&application{dockCollapsed: true, recording: true}).dockView, "● REC")
@@ -607,7 +635,9 @@ func TestWindowsRecordingDockInteraction(t *testing.T) {
 	})
 	interactionClickLabel(t, dock, a.controlView, "停止并保存")
 	eventuallyInteraction(t, "recording saved and persistent dock restored", p, func() bool {
-		return strings.Contains(p.log.text(), "capture engine: SAVED") && interactionWindow(cmd.Process.Pid, "", dockTitle) == originalDock
+		var value uint32
+		ok, _, _ := user32.NewProc("GetWindowDisplayAffinity").Call(dock, uintptr(unsafe.Pointer(&value)))
+		return strings.Contains(p.log.text(), "capture engine: SAVED") && interactionWindow(cmd.Process.Pid, "", dockTitle) == originalDock && ok != 0 && value == 0
 	})
 	files, _ := filepath.Glob(filepath.Join(root, "*.mp4"))
 	if len(files) != 1 {
@@ -656,7 +686,7 @@ func TestWindowsRecordingDockInteraction(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("persistent dock prevented normal application exit", p.log.text())
 	}
-	t.Log("persistent startup/restore, screenshot cancellation, edge tab, visible topmost dock, pixel exclusion, pause/resume/stop and MP4 decoding verified")
+	t.Logf("remote=%t: startup/restore affinity cleared, screenshot cancellation, edge tab, visible topmost dock, capture policy pixels, pause/resume/stop and MP4 decoding verified", remote)
 }
 
 var interactionCurrentOverlay uintptr

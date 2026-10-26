@@ -60,7 +60,11 @@ func (a *application) controlView(c *ui.Context) {
 			ui.Row(c).Grow(1).Gap(8).DragWindow().Children(func() {
 				ui.Text(c, "SAKURA / LIVE").FontSize(11).Bold().TextColor(ui.Hex("#e9b3bb"))
 				ui.Text(c, "拖动此处移动").Grow(1).FontSize(11).TextColor(ui.Hex("#9da9ae"))
-				ui.Text(c, "MP4 · 本地保存").FontSize(11).TextColor(ui.Hex("#9da9ae"))
+				mode := "MP4 · 本地保存"
+				if a.store.Config.RemoteCompatible {
+					mode = "远程兼容 · 控制台可能入镜"
+				}
+				ui.Text(c, mode).FontSize(11).TextColor(ui.Hex("#9da9ae"))
 			})
 			ui.Button(c, "收纳").Disabled(a.stopping || !a.recording).OnClick(a.collapseDock)
 		})

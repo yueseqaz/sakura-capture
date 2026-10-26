@@ -35,6 +35,9 @@ func TestSettingsView(t *testing.T) {
 	if !tt.HasText("全局快捷键") {
 		t.Fatal(tt.Texts())
 	}
+	if !tt.HasText("云电脑 / 远程桌面兼容（录制控制台可能入镜）") {
+		t.Fatal("missing explicit remote capture tradeoff", tt.Texts())
+	}
 }
 func TestHistoryEmpty(t *testing.T) {
 	a := &application{store: core.Defaults(), tab: 1}

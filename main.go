@@ -414,8 +414,9 @@ func (a *application) pause() {
 }
 func (a *application) showControl() error {
 	a.ensureDock()
-	// Apply exclusion before showing the control, avoiding a captured first frame.
-	if err := excludeWindow(a.control.NativeHandle()); err != nil {
+	// Display affinity also affects remote desktop streaming, not just our encoder.
+	// The opt-in compatible policy intentionally allows the dock into recordings.
+	if err := setWindowCaptureExcluded(a.control.NativeHandle(), !a.store.Config.RemoteCompatible); err != nil {
 		return err
 	}
 	a.dockCollapsed = false
@@ -599,6 +600,8 @@ func (a *application) settingsView(c *ui.Context) {
 			ui.Button(c, "贴边收纳").OnClick(a.collapseDock)
 		})
 		ui.Text(c, "截图时自动隐藏，结束后恢复。录制时切换为控制台；收纳后悬停可展开。完整退出请使用托盘菜单。 ").FillWidth().FontSize(12)
+		ui.Checkbox(c, &a.store.Config.RemoteCompatible, "云电脑 / 远程桌面兼容（录制控制台可能入镜）").Disabled(a.busy || a.rec != nil).OnChange(func() { a.save() })
+		ui.Text(c, "仅在录制时关闭捕获排除，避免远程画面把控制台显示为黑块。控制台位于录制范围内时会被录入；可移到范围外。整屏录制不能保证同时远程可见且不入镜。待机和截图无需开启此选项。").FillWidth().FontSize(12)
 	})
 	section(c, "保存与录制", "设置只保存在当前用户的本地配置目录。", func() {
 		ui.Text(c, "保存目录").FontSize(12)

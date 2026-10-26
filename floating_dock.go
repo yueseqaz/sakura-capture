@@ -36,9 +36,8 @@ func (a *application) ensureDock() {
 			a.collapseDock()
 		}
 	})
-	// Idle screenshots also hide the dock before the engine freezes the desktop.
-	// Recording rechecks affinity and refuses to start if exclusion is unsupported.
-	_ = excludeWindow(a.control.NativeHandle())
+	// Idle windows must remain capturable by cloud-PC / remote-desktop streams.
+	// Screenshots hide the dock; only a local recording enables exclusion.
 	cfg := a.store.Config
 	if cfg.DockSaved {
 		moveDock(a.control.NativeHandle(), image.Pt(cfg.DockX, cfg.DockY))
@@ -81,7 +80,15 @@ func (a *application) sizeDock(w, h int) {
 }
 
 func (a *application) restoreDock() {
-	if a.control == nil {
+	if a.control == nil || a.rec != nil || a.recording {
+		return
+	}
+	if err := setWindowCaptureExcluded(a.control.NativeHandle(), false); err != nil {
+		a.status = err.Error()
+		a.control.Hide()
+		if a.win != nil {
+			a.show()
+		}
 		return
 	}
 	a.dockCollapsed = false

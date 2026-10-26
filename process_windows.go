@@ -50,7 +50,10 @@ func prepareCommand(c *exec.Cmd) {
 	c.SysProcAttr = &syscall.SysProcAttr{CreationFlags: 0x08000000}
 }
 
-func excludeWindow(w uintptr) error {
+func setWindowCaptureExcluded(w uintptr, excluded bool) error {
+	if !excluded {
+		return applyWindowAffinity(w, 0)
+	}
 	// Older Windows can accept 0x11 but behave like WDA_MONITOR (a black
 	// rectangle). Check the real build, not the manifest-sensitive version API.
 	var version struct {
@@ -62,14 +65,18 @@ func excludeWindow(w uintptr) error {
 	if status != 0 || version.Major < 10 || (version.Major == 10 && version.Build < 19041) {
 		return fmt.Errorf("控制台录制排除需要 Windows 10 2004 或更新版本，当前系统不支持，已取消录制")
 	}
-	r, _, err := user32.NewProc("SetWindowDisplayAffinity").Call(w, 0x11)
+	return applyWindowAffinity(w, 0x11)
+}
+
+func applyWindowAffinity(w uintptr, want uint32) error {
+	r, _, err := user32.NewProc("SetWindowDisplayAffinity").Call(w, uintptr(want))
 	if r == 0 {
-		return fmt.Errorf("无法将控制台排除在录屏之外（需要 Windows 10 2004 或更新版本）: %v", err)
+		return fmt.Errorf("无法设置悬浮窗捕获策略（0x%x）: %v", want, err)
 	}
 	var affinity uint32
 	r, _, err = user32.NewProc("GetWindowDisplayAffinity").Call(w, uintptr(unsafe.Pointer(&affinity)))
-	if r == 0 || affinity != 0x11 {
-		return fmt.Errorf("Windows 未确认控制台录制排除设置，已取消录制以免控制台入镜: %v", err)
+	if r == 0 || affinity != want {
+		return fmt.Errorf("Windows 未确认悬浮窗捕获策略（期望 0x%x，实际 0x%x）: %v", want, affinity, err)
 	}
 	return nil
 }

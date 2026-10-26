@@ -13,13 +13,14 @@ func TestRoundTrip(t *testing.T) {
 		t.Fatal(e)
 	}
 	s.Config.Cursor = false
+	s.Config.RemoteCompatible = true
 	s.Config.DockX, s.Config.DockY, s.Config.DockSaved, s.Config.DockEdge = -1920, 80, true, "left"
 	s.Add("中文.png", "截图")
 	if e = s.Save(p); e != nil {
 		t.Fatal(e)
 	}
 	r, e := Load(p)
-	if e != nil || r.Config.Cursor || len(r.History) != 1 {
+	if e != nil || r.Config.Cursor || !r.Config.RemoteCompatible || len(r.History) != 1 {
 		t.Fatalf("roundtrip: %+v %v", r, e)
 	}
 	if !r.Config.DockSaved || r.Config.DockX != -1920 || r.Config.DockY != 80 || r.Config.DockEdge != "left" {
