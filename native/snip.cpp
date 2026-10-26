@@ -262,9 +262,9 @@ struct Editor {
             FillRect(buffer.dc, &bar, dark);
             DeleteObject(dark);
             buttons.clear();
-            std::vector<std::wstring> names = {L"Rect", L"Arrow",    L"Pen",   L"Mosaic",
-                                               L"Text", L"Color",    L"Width", L"Undo",
-                                               L"Redo", L"Reselect", L"Save",  L"Cancel"};
+            std::vector<std::wstring> names = {L"矩形", L"箭头", L"画笔", L"马赛克",
+                                               L"文字", L"颜色", L"线宽", L"撤销",
+                                               L"重做", L"重选", L"保存", L"取消"};
             int cell = (bar.right - bar.left) / 12;
             for (int i = 0; i < 12; i++) {
                 RECT r{bar.left + i * cell, bar.top, bar.left + (i + 1) * cell, bar.top + 38};
@@ -283,16 +283,15 @@ struct Editor {
             RECT help{bar.left + 10, bar.top + 40, bar.right, bar.bottom};
             std::wstring text = std::to_wstring(selection.right - selection.left) + L" x " +
                                 std::to_wstring(selection.bottom - selection.top) +
-                                L"   Enter: save + copy   Ctrl+Z/Y: undo/redo   Esc: cancel";
+                                L"   Enter 保存并复制   Ctrl+Z/Y 撤销/重做   Esc 取消";
             DrawTextW(buffer.dc, text.c_str(), -1, &help, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
         } else {
             RECT r{20, 20, std::min(w - 20, 880), 65};
             HBRUSH dark = CreateSolidBrush(RGB(35, 35, 41));
             FillRect(buffer.dc, &r, dark);
             DeleteObject(dark);
-            std::wstring text = mode == L"region"
-                                    ? L"Drag to select a region. Esc to cancel."
-                                    : L"Click a screen/window to select. Esc to cancel.";
+            std::wstring text = mode == L"region" ? L"拖动选择区域，按 Esc 取消。"
+                                                  : L"点击选择屏幕或窗口，按 Esc 取消。";
             r.left += 14;
             DrawTextW(buffer.dc, text.c_str(), -1, &r, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
         }

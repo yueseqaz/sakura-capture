@@ -14,6 +14,6 @@ if ($LASTEXITCODE) { throw 'Resource compile failed' }
 & cvtres /nologo /machine:x64 /out:../rsrc_windows_amd64.syso app.res
 if ($LASTEXITCODE) { throw 'Resource conversion failed' }
 Pop-Location
-$env:CGO_ENABLED = '0' 
+$env:CGO_ENABLED = '0'
 go build -trimpath -ldflags '-s -w -H=windowsgui' -o dist/SakuraCapture.exe .
 if ($LASTEXITCODE) { throw 'Application build failed' }
