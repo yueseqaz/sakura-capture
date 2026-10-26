@@ -254,6 +254,66 @@ func TestWindowsScreenshotInteraction(t *testing.T) {
 			t.Fatal("Esc left selection running")
 		}
 	})
+	t.Run("move-resize-color", func(t *testing.T) {
+		out := filepath.Join(t.TempDir(), "edited.png")
+		cmd := exec.Command(filepath.Join(dist, "sakura-engine.exe"), "snip", out, "region")
+		prepareCommand(cmd)
+		p := launchInteraction(t, cmd)
+		var w uintptr
+		eventuallyInteraction(t, "editable screenshot", p, func() bool { w = interactionWindow(cmd.Process.Pid, "SakuraCaptureOverlay", ""); return w != 0 })
+		interactionDrag(w, 60, 80, 560, 380)
+		interactionDrag(w, 140, 140, 400, 260)
+		interactionKey(w, 'V')
+		interactionDrag(w, 240, 190, 260, 210)
+		interactionDrag(w, 420, 280, 440, 300)
+		interactionClick(w, 146, 455) // current color opens a popover
+		interactionClick(w, 153, 184) // blue preset in the popover
+		interactionKey(w, 13)
+		select {
+		case <-p.done:
+			if p.err != nil {
+				t.Fatal(p.err, p.log.text())
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("edited screenshot did not save")
+		}
+		f, err := os.Open(out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer f.Close()
+		im, err := png.Decode(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, pt := range [][2]int{{200, 80}, {380, 150}, {200, 220}} {
+			r, g, b, _ := im.At(pt[0], pt[1]).RGBA()
+			if r != 36*257 || g != 124*257 || b != 232*257 {
+				t.Fatalf("edited blue edge missing at %v: %d,%d,%d", pt, r/257, g/257, b/257)
+			}
+		}
+	})
+	t.Run("copy-without-file", func(t *testing.T) {
+		out := filepath.Join(t.TempDir(), "must-not-exist.png")
+		cmd := exec.Command(filepath.Join(dist, "sakura-engine.exe"), "snip", out, "region")
+		prepareCommand(cmd)
+		p := launchInteraction(t, cmd)
+		var w uintptr
+		eventuallyInteraction(t, "copy-only screenshot", p, func() bool { w = interactionWindow(cmd.Process.Pid, "SakuraCaptureOverlay", ""); return w != 0 })
+		interactionDrag(w, 60, 80, 560, 380)
+		interactionClick(w, 60+8+13*53+25, 390+26)
+		select {
+		case <-p.done:
+			if p.err != nil || !strings.Contains(p.log.text(), "COPIED") {
+				t.Fatal(p.err, p.log.text())
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("copy-only did not finish")
+		}
+		if _, err := os.Stat(out); !os.IsNotExist(err) {
+			t.Fatalf("copy-only created a file: %v", err)
+		}
+	})
 }
 
 func interactionClickLabel(t *testing.T, w uintptr, view func(*ui.Context), text string) {

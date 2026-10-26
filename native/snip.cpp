@@ -55,6 +55,9 @@ struct Editor {
     std::vector<Button> buttons;
     Mark current{};
     HFONT font = nullptr;
+    HWND textInput = nullptr;
+    HFONT inputFont = nullptr;
+    WNDPROC textDefault = nullptr;
     POINT pointer{}, lastHover{};
     bool textEditing = false;
     Editor(std::wstring p, std::wstring m, bool only, bool fake = false)
@@ -81,6 +84,8 @@ struct Editor {
                            DEFAULT_PITCH, L"Microsoft YaHei UI");
     }
     ~Editor() {
+        if (inputFont)
+            DeleteObject(inputFont);
         if (font)
             DeleteObject(font);
     }
@@ -490,8 +495,8 @@ struct Editor {
         FrameRect(dc, &pixel, (HBRUSH)GetStockObject(WHITE_BRUSH));
         SetTextColor(dc, RGB(255, 255, 255));
         RECT text{left + 6, top + 122, left + 128, top + 148};
-        std::wstring value = L"#" + colorHex(GetPixel(shot.dc, std::min(pointer.x, w - 1),
-                                                      std::min(pointer.y, h - 1)));
+        std::wstring value = L"#" + colorHex(GetPixel(shot.dc, std::min<LONG>(pointer.x, w - 1),
+                                                      std::min<LONG>(pointer.y, h - 1)));
         DrawTextW(dc, value.c_str(), -1, &text, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
     }
     std::vector<POINT> handles(const Mark& mark) {
@@ -750,7 +755,69 @@ struct Editor {
         picking = false;
         notice.clear();
     }
+    void syncText() {
+        if (!textInput || activeMark < 0 || activeMark >= (int)marks.size())
+            return;
+        int length = GetWindowTextLengthW(textInput);
+        std::wstring value((size_t)length + 1, L'\0');
+        GetWindowTextW(textInput, value.data(), length + 1);
+        value.resize(length);
+        marks[activeMark].text = std::move(value);
+    }
+    static LRESULT CALLBACK textProcedure(HWND input, UINT msg, WPARAM wp, LPARAM lp) {
+        auto editor = (Editor*)GetWindowLongPtrW(input, GWLP_USERDATA);
+        if (msg == WM_KEYDOWN && (wp == VK_RETURN || wp == VK_ESCAPE)) {
+            editor->endText();
+            InvalidateRect(editor->window, nullptr, FALSE);
+            return 0;
+        }
+        if (msg == WM_KEYDOWN && wp == 'S' && (GetKeyState(VK_CONTROL) & 0x8000)) {
+            editor->endText();
+            editor->finish();
+            return 0;
+        }
+        return CallWindowProcW(editor->textDefault, input, msg, wp, lp);
+    }
+    void beginText(bool existing) {
+        if (activeMark < 0 || activeMark >= (int)marks.size())
+            return;
+        if (existing)
+            checkpoint();
+        textEditing = true;
+        auto& mark = marks[activeMark];
+        inputFont =
+            CreateFontW(-mark.width, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, 0,
+                        0, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Microsoft YaHei UI");
+        POINT p = mark.points.front();
+        int available = std::max<LONG>(24, selection.right - p.x);
+        textInput =
+            CreateWindowExW(0, L"EDIT", nullptr, WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL,
+                            p.x, p.y, std::min(available, 440), mark.width + 12, window, nullptr,
+                            GetModuleHandleW(nullptr), nullptr);
+        if (!textInput) {
+            DeleteObject(inputFont);
+            inputFont = nullptr;
+            // Keep the overlay's Unicode WM_CHAR input path as a fallback.
+            return;
+        }
+        SetWindowLongPtrW(textInput, GWLP_USERDATA, (LONG_PTR)this);
+        textDefault = (WNDPROC)SetWindowLongPtrW(textInput, GWLP_WNDPROC, (LONG_PTR)textProcedure);
+        SendMessageW(textInput, WM_SETFONT, (WPARAM)inputFont, TRUE);
+        SendMessageW(textInput, EM_SETLIMITTEXT, 4096, 0);
+        SetWindowTextW(textInput, mark.text.c_str());
+        SetFocus(textInput);
+        SendMessageW(textInput, EM_SETSEL, existing ? 0 : (WPARAM)-1, (LPARAM)-1);
+    }
     void endText() {
+        if (textInput) {
+            syncText();
+            HWND input = textInput;
+            textInput = nullptr;
+            DestroyWindow(input);
+            DeleteObject(inputFont);
+            inputFont = nullptr;
+            SetFocus(window);
+        }
         if (textEditing && activeMark >= 0 && activeMark < (int)marks.size() &&
             marks[activeMark].text.empty())
             marks.erase(marks.begin() + activeMark);
@@ -919,6 +986,12 @@ struct Editor {
         POINT p = bound({GET_X_LPARAM(lp), GET_Y_LPARAM(lp)});
         auto refresh = [&]() { InvalidateRect(window, nullptr, FALSE); };
         switch (msg) {
+        case WM_COMMAND:
+            if ((HWND)lp == textInput && HIWORD(wp) == EN_CHANGE) {
+                syncText();
+                refresh();
+            }
+            return 0;
         case WM_ERASEBKGND:
             return 1;
         case WM_PAINT:
@@ -1017,9 +1090,8 @@ struct Editor {
             if (selected && !paletteOpen && !picking && buttonAt(p) < 0) {
                 selectMark(p);
                 if (activeMark >= 0 && marks[activeMark].tool == Tool::Text) {
-                    checkpoint();
                     tool = Tool::Text;
-                    textEditing = true;
+                    beginText(true);
                     refresh();
                     return 0;
                 }
@@ -1028,7 +1100,8 @@ struct Editor {
         case WM_LBUTTONDOWN:
             pointer = p;
             if (picking) {
-                chooseColor(GetPixel(shot.dc, std::min(p.x, w - 1), std::min(p.y, h - 1)));
+                chooseColor(
+                    GetPixel(shot.dc, std::min<LONG>(p.x, w - 1), std::min<LONG>(p.y, h - 1)));
                 picking = false;
                 refresh();
                 return 0;
@@ -1097,7 +1170,7 @@ struct Editor {
                 }
                 if (tool == Tool::Text) {
                     commitMark({tool, {p}, L"", colors[colorIndex], thickness});
-                    textEditing = true;
+                    beginText(false);
                     refresh();
                     return 0;
                 }
@@ -1342,8 +1415,8 @@ int snip(const std::wstring& path, const std::wstring& mode, bool selectOnly) {
     wc.hCursor = LoadCursorW(nullptr, IDC_CROSS);
     RegisterClassW(&wc);
     HWND window = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW, wc.lpszClassName,
-                                  L"Sakura Capture", WS_POPUP, editor.x, editor.y, editor.w,
-                                  editor.h, nullptr, nullptr, wc.hInstance, &editor);
+                                  L"Sakura Capture", WS_POPUP | WS_CLIPCHILDREN, editor.x, editor.y,
+                                  editor.w, editor.h, nullptr, nullptr, wc.hInstance, &editor);
     if (!window)
         throw std::runtime_error("Cannot create screenshot overlay");
     // SWP_SHOWWINDOW is not overridden by a parent's STARTUPINFO/SW_HIDE.
