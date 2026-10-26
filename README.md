@@ -8,6 +8,8 @@ A small, offline Windows screenshot and screen-recording application. Native Go 
 
 ## Download
 
+Published packages are available on [GitHub Releases](https://github.com/yueseqaz/sakura-capture/releases). For development builds:
+
 1. Open [Windows Build](https://github.com/yueseqaz/sakura-capture/actions/workflows/windows.yml).
 2. Select the latest **successful** build and download `SakuraCapture-windows-x64` under Artifacts (GitHub login required).
 3. Extract the artifact, then fully extract `SakuraCapture-windows-x64.zip`.
@@ -24,6 +26,8 @@ Tagged versions create a **draft** GitHub Release for manual verification before
 - 15 / 30 / 60 FPS, bitrate presets, mouse cursor capture, optional countdown, pause/resume and graceful stop.
 - Native MyGo interface, tray, configurable global shortcuts, local history and persistent settings.
 - Windows-native engine built with the static MSVC runtime; no additional browser or .NET runtime.
+
+See [measured build verification](docs/BUILD_VERIFICATION.md) for what was actually tested and what still requires real hardware.
 
 ## Requirements and honest boundaries
 
