@@ -141,7 +141,7 @@ func interactionFailureScreenshot() {
 	}{Size: 40, Width: int32(w), Height: -int32(h), Planes: 1, Bits: 32}
 	var pixels unsafe.Pointer
 	bmp, _, _ := gdi.NewProc("CreateDIBSection").Call(dc, uintptr(unsafe.Pointer(&info)), 0, uintptr(unsafe.Pointer(&pixels)), 0, 0)
-	if bmp == 0 || pixels == 0 {
+	if bmp == 0 || pixels == nil {
 		return
 	}
 	defer gdi.NewProc("DeleteObject").Call(bmp)
